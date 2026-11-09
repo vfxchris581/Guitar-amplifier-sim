@@ -120,6 +120,18 @@ jobs:
             ${{ matrix.pluginval_bin }} "${ARGS[@]}" "${{ steps.vst3.outputs.path }}"
           fi
 
+      - name: Build macOS DMG installer
+        if: runner.os == 'macOS'
+        run: packaging/macos/make_dmg.sh "${{ steps.vst3.outputs.path }}" dist
+
+      - name: Upload macOS DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarAmplifierSim-macOS-DMG
+          path: dist/*.dmg
+          if-no-files-found: error
+
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
