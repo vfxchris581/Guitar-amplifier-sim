@@ -8,6 +8,7 @@
 #include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
 #include "plugin/IRLibrary.h"
+#include "plugin/Library.h"
 #include "common/WavIO.h"
 #include "train/WaveNet.h"
 
@@ -685,6 +686,76 @@ static void testEffects()
     CHECK (std::isfinite (buf.getSample (0, 10)), "rig output not finite");
 }
 
+// ---------------------------------------------------------------------------
+static void testLibraries (const File& dir)
+{
+    std::printf ("[library] models and presets\n");
+    dir.deleteRecursively();
+    ModelLibrary::rootOverride = dir;
+    PresetLibrary::folderOverride = dir.getChildFile ("Presets");
+
+    // two real NAM files with different metadata
+    gas::train::WaveNet net (gas::train::WaveNetSpec::fromPreset (gas::train::Preset::Nano));
+    net.initialise (3);
+    const auto a = dir.getSiblingFile ("lead.nam"), b = dir.getSiblingFile ("clean.nam"), junk = dir.getSiblingFile ("junk.nam");
+    a.replaceWithText (net.exportNam (R"({"name":"5150 Lead","gear_make":"Peavey","gear_model":"5150","gear_type":"amp","tone_type":"hi_gain","modeled_by":"Me"})", 48000.0));
+    b.replaceWithText (net.exportNam (R"({"name":"Twin Clean","gear_make":"Fender","gear_model":"Twin Reverb","gear_type":"amp_cab","tone_type":"clean"})", 48000.0));
+    junk.replaceWithText ("{ not a model");
+
+    ModelLibrary lib;
+    StringArray problems;
+    const int n = lib.importFiles ({ a, b, junk }, problems);
+    CHECK (n == 2 && problems.size() == 1, "import: %d imported, %d problems", n, problems.size());
+    ModelLibrary::Filter f;
+    f.toneType = "hi_gain";
+    CHECK (lib.filtered (f).size() == 1 && lib.filtered (f)[0].gearModel == "5150", "tone filter");
+    f = {};
+    f.search = "fender";
+    CHECK (lib.filtered (f).size() == 1, "search");
+    const auto twin = lib.filtered (f)[0].file;
+    lib.setFavourite (twin, true);
+    lib.setDisplayName (twin, "My Twin");
+    lib.setCollections (twin, { "Cleans", "Live" });
+    lib.setDescription (twin, "Bright switch on");
+    ModelLibrary again; // persisted in the index
+    const auto* e = again.find (twin);
+    CHECK (e != nullptr && e->favourite && e->displayName == "My Twin" && e->collections.contains ("Live") && e->description == "Bright switch on",
+           "user data not persisted");
+    f = {};
+    f.favouritesOnly = true;
+    CHECK (again.filtered (f).size() == 1, "favourites filter");
+    String err;
+    CHECK (again.remove (twin, err) && again.entries().size() == 1 && ! twin.existsAsFile(), "delete");
+
+    // presets restore the full rig
+    GuitarAmpProcessor p;
+    p.prepareToPlay (48000.0, 256);
+    setParam (p, "delay_on", 1.0f);
+    setParam (p, "delay_time", 420.0f);
+    setParam (p, "inputGain", 3.0f);
+    p.getChain().setOrder (false, "reverb,eq,mod,delay");
+    MemoryBlock state;
+    p.getStateInformation (state);
+    PresetLibrary presets;
+    const auto pf = presets.save ("Lead Rig", state, err);
+    CHECK (pf.existsAsFile(), "preset save: %s", err.toRawUTF8());
+    CHECK (presets.rename (pf, "Lead Rig 2", err) && presets.presets().size() == 1 && presets.presets()[0].name() == "Lead Rig 2", "rename");
+
+    GuitarAmpProcessor q;
+    q.prepareToPlay (48000.0, 256);
+    MemoryBlock loaded;
+    CHECK (presets.load (presets.presets()[0].file, loaded, err), "preset load");
+    q.setStateInformation (loaded.getData(), (int) loaded.getSize());
+    CHECK (*q.getParameters().getRawParameterValue ("delay_on") > 0.5f
+               && std::abs (*q.getParameters().getRawParameterValue ("delay_time") - 420.0f) < 0.5f
+               && std::abs (*q.getParameters().getRawParameterValue ("inputGain") - 3.0f) < 0.05f,
+           "preset parameters not restored");
+    CHECK (q.getChain().getOrder (false) == "reverb,eq,mod,delay", "preset chain order not restored");
+    presets.setFavourite (presets.presets()[0].file, true);
+    CHECK (PresetLibrary().presets()[0].favourite, "preset favourite");
+    std::printf ("  import/filter/search/favourite/rename/collections/delete and preset save/load/rename verified\n");
+}
+
 static void snapshotEditor (const File& png)
 {
     std::printf ("[editor] AMP page snapshot -> %s\n", png.getFullPathName().toRawUTF8());
@@ -767,7 +838,7 @@ static void snapshotEditor (const File& png)
         setParam (p, "eq_b2Gain", 4.0f);
         setParam (p, "eq_b4Gain", -3.0f);
         setParam (p, "eq_hpf", 90.0f);
-        for (int section = 3; section <= 4; ++section)
+        for (int section = 3; section <= 6; ++section)
         {
             ed->showSection (section);
             for (int k = 0; k < 6; ++k)
@@ -781,7 +852,8 @@ static void snapshotEditor (const File& png)
                 }
             }
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.5f);
-            const auto f = png.getSiblingFile (section == 3 ? "stomp_page.png" : "effects_page.png");
+            const char* names[] = { "", "", "", "stomp_page.png", "effects_page.png", "library_page.png", "settings_page.png" };
+            const auto f = png.getSiblingFile (names[section]);
             f.deleteFile();
             FileOutputStream os (f);
             PNGImageFormat().writeImageToStream (img, os);
@@ -798,6 +870,7 @@ int main (int argc, char** argv)
     testStateRoundTrip();
     testMissingModel();
     testEffects();
+    testLibraries (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_library_test"));
     testCabinet (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_cab_test"));
     testCaptureMilestone (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_capture_test"));
 

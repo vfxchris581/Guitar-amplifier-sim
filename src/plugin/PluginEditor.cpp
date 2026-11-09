@@ -19,16 +19,23 @@ GuitarAmpEditor::GuitarAmpEditor (GuitarAmpProcessor& p)
                    }),
       cabPage (p),
       stompPage (p),
-      effectsPage (p)
+      effectsPage (p),
+      libraryPage (p, [this]
+                   {
+                       stompPage.rebuild();
+                       stompPage.resized();
+                       effectsPage.rebuild();
+                       effectsPage.resized();
+                   }),
+      settingsPage (p)
 {
     setLookAndFeel (&theme);
-    sections = { &ampPage, &capturePage, &cabPage, &stompPage, &effectsPage };
+    sections = { &ampPage, &capturePage, &cabPage, &stompPage, &effectsPage, &libraryPage, &settingsPage };
     for (auto* c : sections)
         addChildComponent (c);
     ampPage.setVisible (true);
 
-    // Sections appear here as they are built: AMP, CAPTURE, then CAB, STOMP, EFFECTS, LIBRARY, SETTINGS.
-    for (auto name : { "AMP", "CAPTURE", "CAB", "STOMP", "EFFECTS" })
+    for (auto name : { "AMP", "CAPTURE", "CAB", "STOMP", "EFFECTS", "LIBRARY", "SETTINGS" })
     {
         auto* t = tabs.add (new SectionTab (name));
         t->setClickingTogglesState (true);
@@ -103,7 +110,7 @@ void GuitarAmpEditor::paint (Graphics& g)
 
     g.setColour (ui::colours::textDim);
     g.setFont (FontOptions (12.0f));
-    g.drawText ("Neural Amp Modeler engine  |  v" GAS_VERSION_STRING, h, Justification::centredRight);
+    g.drawText ("v" GAS_VERSION_STRING, h, Justification::centredRight);
 
     auto footer = getLocalBounds().removeFromBottom (kFooterHeight).reduced (18, 0);
     g.setColour (ui::colours::textDim);
@@ -121,7 +128,7 @@ void GuitarAmpEditor::resized()
 
     const int titleW = GlyphArrangement::getStringWidthInt (FontOptions (20.0f, Font::bold),
                                                             String (GAS_PRODUCT_NAME).toUpperCase());
-    auto tabRow = Rectangle<int> (18 + titleW + 20, 0, 600, kHeaderHeight);
+    auto tabRow = Rectangle<int> (18 + titleW + 12, 0, 800, kHeaderHeight);
     for (auto* t : tabs)
-        t->setBounds (tabRow.removeFromLeft (t->getButtonText().length() * 11 + 34));
+        t->setBounds (tabRow.removeFromLeft (t->getButtonText().length() * 10 + 24));
 }

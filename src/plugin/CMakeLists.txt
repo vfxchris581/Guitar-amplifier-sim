@@ -1,5 +1,5 @@
 # Resources compiled into the plugin
-juce_add_binary_data(GasBinaryData SOURCES "${NAM_LOUDNESS_STIMULUS}")
+juce_add_binary_data(GasBinaryData SOURCES "${NAM_LOUDNESS_STIMULUS}" "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
 
 juce_add_plugin(${PRODUCT_TARGET}
   PRODUCT_NAME             "${PRODUCT_NAME}"
@@ -25,6 +25,8 @@ target_sources(${PRODUCT_TARGET} PRIVATE
   CabEngine.cpp
   IRLibrary.cpp
   fx/Effects.cpp
+  Library.cpp
+  ui/LibraryPages.cpp
   ui/CabPage.cpp
   ui/FxPages.cpp
   ui/CapturePage.cpp

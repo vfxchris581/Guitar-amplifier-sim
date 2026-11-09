@@ -57,9 +57,9 @@ public:
     explicit StompPage (GuitarAmpProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
+    void rebuild(); // after the chain order changed (e.g. a preset was loaded)
 
 private:
-    void rebuild();
     GuitarAmpProcessor& processor;
     juce::ToggleButton sectionOn { "Stomps on" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sectionAttachment;
@@ -77,9 +77,10 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void rebuild();
+
 private:
     void timerCallback() override;
-    void rebuild();
     void paintCurve (juce::Graphics&, juce::Rectangle<float>);
     struct Curve : public juce::Component
     {

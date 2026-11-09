@@ -4,10 +4,11 @@ A guitar amp modeler, profiler, cab loader and effects suite in **one VST3 plugi
 built on genuine [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
 technology. Windows, macOS and Linux.
 
-> **Status:** Phase 1 (NAM playback), Phase 4 (integrated Capture Studio: capture,
-> in-plugin training, A/B validation), Phase 2 (dual-mic cabinet / IR engine) and
-> Phase 3 (stompboxes, effects, reorderable chain) are implemented and pass automated
-> tests. The model/preset library is next — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** all seven sections — AMP, CAPTURE, CAB, STOMP, EFFECTS, LIBRARY, SETTINGS —
+> are implemented and pass automated tests on Windows, macOS and Linux (Phases 1–5).
+> What still needs a human: listening tests in a DAW and a capture of a real amp; see the
+> checklists in [docs/ROADMAP.md](docs/ROADMAP.md). Release work (installers, signing,
+> host matrix) is Phase 7 — see [docs/ROADMAP.md](docs/ROADMAP.md).
 > Nothing in the UI is a placeholder: sections appear as they are built.
 
 ## What works now
@@ -37,6 +38,10 @@ technology. Windows, macOS and Linux.
 **STOMP** — noise gate, compressor (threshold, ratio, attack, release, makeup, mix), overdrive, clean boost, distortion and fuzz on a pedalboard you reorder by dragging. The drives are original circuit-inspired designs (mid-hump soft clipping, op-amp hard clipping with gain-bandwidth roll-off, biased transistor fuzz) running 4x oversampled — measured aliasing below -88 dB.
 
 **EFFECTS** — parametric EQ (HPF, LPF, low/high shelves, four bands) with live response curve and spectrum analyser; modulation (chorus, phaser, flanger); delay (digital, analog, ping-pong, tempo sync, feedback filtering, stereo width); reverb (room, hall and plate FDNs, dispersive spring). Units reorder by drag and drop; whole sections can be bypassed; the chain order is saved with the session.
+
+**LIBRARY** — every `.nam` in your Models and Captures folders: search, filter by gear type / tone / collection, favourites, display names, tags, collections and notes (kept in an index, the model files stay untouched), import, delete, export (with a licence warning for models you didn't capture), load, and seamless A/B against the model playing now. Presets store the complete rig (model, IRs, mics, every effect, chain order, levels) with save, load, rename, delete, favourite, import and export.
+
+**SETTINGS** — library folders, how the plugin sits in the host (sample rate, block, channels, latency), third-party licences.
 
 ## Building
 

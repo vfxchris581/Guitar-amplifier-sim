@@ -8,8 +8,8 @@ A phase is done only when its milestone is demonstrated, not when its UI exists.
 | 4. Integrated Capture Studio | Capture and train a genuine NAM model without leaving the plugin | **Done in code and automated tests (simulated amp). Needs a real amp test.** |
 | 2. Cabinet & IR engine | Professional amp + cab processing | **Done in code and automated tests.** |
 | 3. Effects & routing | Complete guitar rig | **Done in code and automated tests.** |
-| 5. Model & preset management | Library, search, presets, import/export | Planned |
-| 6. Professional interface | Full GUI polish | Planned |
+| 5. Model & preset management | Library, search, presets, import/export | **Done in code and automated tests.** |
+| 6. Professional interface | Full GUI polish | In progress: all pages built and resizable; needs a design pass after real use |
 | 7. Testing & release | Installers, host matrix, docs, licence decisions | Planned |
 
 ## Phase 1 — sign-off checklist
