@@ -7,7 +7,7 @@
 
 #include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
-#include "WavIO.h"
+#include "common/WavIO.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -50,7 +50,7 @@ static void testProcessing()
 
     std::vector<float> di;
     double rate = 0;
-    gas::test::readWavMono (NAM_EXAMPLE_AUDIO, di, rate);
+    gas::wav::readWavMono (NAM_EXAMPLE_AUDIO, di, rate);
 
     MidiBuffer midi;
     double energy = 0;
@@ -147,7 +147,7 @@ static void snapshotEditor (const File& png)
     // play NAM's example test signal (it starts after 1 s of silence) so the meters show level
     std::vector<float> di;
     double rate = 0;
-    gas::test::readWavMono (NAM_EXAMPLE_AUDIO, di, rate);
+    gas::wav::readWavMono (NAM_EXAMPLE_AUDIO, di, rate);
     MidiBuffer midi;
     for (size_t pos = (size_t) rate; pos + 256 <= (size_t) (1.4 * rate); pos += 256)
     {

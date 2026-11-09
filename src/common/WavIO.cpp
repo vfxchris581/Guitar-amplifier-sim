@@ -1,10 +1,10 @@
-#include "WavIO.h"
+#include "common/WavIO.h"
 
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 
-namespace gas::test
+namespace gas::wav
 {
 namespace
 {
@@ -89,4 +89,4 @@ bool writeWavMono (const std::string& path, const std::vector<float>& samples, d
     f.write ((const char*) samples.data(), dataBytes);
     return (bool) f;
 }
-} // namespace gas::test
+} // namespace gas::wav

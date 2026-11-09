@@ -9,7 +9,7 @@
 
 #include "engine/AmpEngine.h"
 #include "engine/NamModelInstance.h"
-#include "WavIO.h"
+#include "common/WavIO.h"
 
 #include "NAM/dsp.h"
 #include "NAM/get_dsp.h"
@@ -113,7 +113,7 @@ static fs::path modelPath (const char* name) { return fs::path (NAM_EXAMPLE_MODE
 static std::vector<float> exampleInput (double& rate)
 {
     std::vector<float> x;
-    if (! gas::test::readWavMono (NAM_EXAMPLE_AUDIO, x, rate))
+    if (! gas::wav::readWavMono (NAM_EXAMPLE_AUDIO, x, rate))
     {
         std::printf ("  could not read %s\n", NAM_EXAMPLE_AUDIO);
         std::exit (2);

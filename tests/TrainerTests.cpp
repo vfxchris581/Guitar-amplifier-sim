@@ -7,7 +7,7 @@
 
 #include "train/Trainer.h"
 #include "train/WaveNet.h"
-#include "WavIO.h"
+#include "common/WavIO.h"
 
 #include "NAM/dsp.h"
 #include "NAM/get_dsp.h"
@@ -249,7 +249,7 @@ static void testLoudness (const char* outDir, double reference)
     std::printf ("[loudness] NAM loudness metadata\n");
     std::vector<float> stim;
     double rate = 0;
-    if (! gas::test::readWavMono (NAM_LOUDNESS_STIMULUS, stim, rate))
+    if (! gas::wav::readWavMono (NAM_LOUDNESS_STIMULUS, stim, rate))
     {
         CHECK (false, "could not read %s", NAM_LOUDNESS_STIMULUS);
         return;
@@ -265,7 +265,7 @@ static void testLoudness (const char* outDir, double reference)
     {
         // For the Python cross-check (tests/loudness_reference.py)
         const auto y = runCausal (net, stim);
-        gas::test::writeWavMono ((fs::path (outDir) / "loudness_model_output.wav").string(), y, 48000.0);
+        gas::wav::writeWavMono ((fs::path (outDir) / "loudness_model_output.wav").string(), y, 48000.0);
     }
     if (! std::isnan (reference))
     {

@@ -32,12 +32,16 @@ include(cmake/NamCore.cmake)        # builds the genuine NAM inference library
 # ---------------------------------------------------------------------------
 # Real-time engine: pure C++ (no JUCE), so it can be unit-tested headlessly
 # ---------------------------------------------------------------------------
+add_library(gas_common STATIC src/common/WavIO.cpp)
+target_include_directories(gas_common PUBLIC src)
+
 add_library(gas_engine STATIC
   src/engine/ModelInfo.cpp
   src/engine/NamModelInstance.cpp
   src/engine/AmpEngine.cpp
 )
 target_include_directories(gas_engine PUBLIC src)
+target_link_libraries(gas_engine PUBLIC gas_common)
 # NAM registers architectures via static initialisers, so every object must be linked.
 target_link_libraries(gas_engine PUBLIC "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>")
 if(NOT MSVC)
@@ -58,6 +62,16 @@ if(MSVC)
 else()
   target_compile_options(gas_train PRIVATE -O3 -Wall -Wextra -Wno-unused-parameter)
 endif()
+
+# Capture: signal verification, sample-synchronous play/record, NAM's capture checks
+add_library(gas_capture STATIC
+  src/capture/Md5.cpp
+  src/capture/CaptureSignal.cpp
+  src/capture/CaptureAnalysis.cpp
+  src/capture/CaptureTransport.cpp
+)
+target_include_directories(gas_capture PUBLIC src)
+target_link_libraries(gas_capture PUBLIC gas_common)
 
 if(GAS_BUILD_TESTS)
   enable_testing()

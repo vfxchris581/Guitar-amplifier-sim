@@ -76,6 +76,13 @@ jobs:
           [ -f build/tests/Release/trainer_tests.exe ] && BIN=build/tests/Release/trainer_tests.exe
           "$BIN" --write-loudness-output .
 
+      - name: Capture tests (play/record sync, latency, data checks, capture-to-model)
+        shell: bash
+        run: |
+          BIN=build/tests/capture_tests
+          [ -f build/tests/Release/capture_tests.exe ] && BIN=build/tests/Release/capture_tests.exe
+          "$BIN"
+
       - name: Loudness matches NAM's Python implementation
         if: runner.os == 'Linux'
         run: |
