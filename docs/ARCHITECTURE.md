@@ -116,3 +116,21 @@ the UI report success.
 
 **Validation.** A/B against the recorded amp reference using the same input, level-matched
 and latency-aligned, with null/difference listening and spectra.
+
+## Cabinet, effects and library (Phases 2, 3, 5 — implemented)
+
+Full signal path inside `processBlock`:
+
+```
+input select -> [gate, comp, od, boost, dist, fuzz] (mono, reorderable) -> NAM amp
+            -> cab (2 mics, stereo) -> [EQ, mod, delay, reverb] (stereo, reorderable) -> output
+```
+
+| Path | What |
+|---|---|
+| `src/plugin/CabEngine` | Two zero-latency JUCE convolvers (wait-free IR loading + resampling), per-mic level/pan/polarity/delay/HPF/LPF, IR length and normalisation; Auto mode skips the cab for cab-inclusive captures |
+| `src/plugin/fx/Effects` | Every effect module and `fx::Chain`: orders are packed into one atomic each, so reordering from the UI never locks the audio thread. Drives run inside JUCE's 4x polyphase-IIR oversampler |
+| `src/plugin/IRLibrary`, `src/plugin/Library` | IR library with categories; NAM model library (metadata from files, user data in `models.json`); presets = full plugin state files |
+| `src/plugin/ui/*` | One page per section; the module panels are generated from the parameters, so every control is a real parameter |
+
+Each library keeps user data in a JSON index next to the files and never modifies `.nam` or IR files.
