@@ -1,0 +1,106 @@
+name: Build & validate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            pluginval_zip: pluginval_Linux.zip
+            pluginval_bin: ./pluginval
+          - name: macOS (universal)
+            os: macos-14
+            pluginval_zip: pluginval_macOS.zip
+            pluginval_bin: ./pluginval.app/Contents/MacOS/pluginval
+            cmake_extra: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          - name: Windows
+            os: windows-2022
+            pluginval_zip: pluginval_Windows.zip
+            pluginval_bin: ./pluginval.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb \
+            libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxext-dev libxi-dev libxcomposite-dev libxrender-dev \
+            libfreetype-dev libfontconfig1-dev
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ${{ matrix.cmake_extra }}
+          else
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_extra }}
+          fi
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Engine tests (NAM parity, resampling, real-time safety, switching)
+        shell: bash
+        run: |
+          BIN=build/tests/engine_tests
+          [ -f build/tests/Release/engine_tests.exe ] && BIN=build/tests/Release/engine_tests.exe
+          "$BIN"
+
+      - name: Plugin tests (processing, state, missing models)
+        shell: bash
+        run: |
+          BIN=build/tests/plugin_tests
+          [ -f build/tests/Release/plugin_tests.exe ] && BIN=build/tests/Release/plugin_tests.exe
+          if [ "$RUNNER_OS" == "Linux" ]; then xvfb-run -a "$BIN"; else "$BIN"; fi
+
+      - name: Locate VST3
+        id: vst3
+        shell: bash
+        run: |
+          P=$(find build -type d -name "*.vst3" -path "*VST3*" | head -n 1)
+          echo "path=$P" >> "$GITHUB_OUTPUT"
+          echo "Built: $P"
+
+      - name: pluginval (strictness 10)
+        shell: bash
+        run: |
+          curl -sSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/latest/download/${{ matrix.pluginval_zip }}"
+          unzip -q pluginval.zip
+          ARGS=(--strictness-level 10 --timeout-ms 600000 --output-dir pluginval-logs)
+          if [ "$RUNNER_OS" == "macOS" ]; then ARGS+=(--skip-gui-tests); fi
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            chmod +x ./pluginval
+            xvfb-run -a ${{ matrix.pluginval_bin }} "${ARGS[@]}" "${{ steps.vst3.outputs.path }}"
+          else
+            ${{ matrix.pluginval_bin }} "${ARGS[@]}" "${{ steps.vst3.outputs.path }}"
+          fi
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarAmplifierSim-VST3-${{ runner.os }}
+          path: ${{ steps.vst3.outputs.path }}
+          if-no-files-found: error
