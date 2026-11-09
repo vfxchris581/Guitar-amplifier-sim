@@ -1,3 +1,6 @@
+# Resources compiled into the plugin
+juce_add_binary_data(GasBinaryData SOURCES "${NAM_LOUDNESS_STIMULUS}")
+
 juce_add_plugin(${PRODUCT_TARGET}
   PRODUCT_NAME             "${PRODUCT_NAME}"
   COMPANY_NAME             "${COMPANY_NAME}"
@@ -18,6 +21,8 @@ juce_add_plugin(${PRODUCT_TARGET}
 target_sources(${PRODUCT_TARGET} PRIVATE
   PluginProcessor.cpp
   PluginEditor.cpp
+  CaptureController.cpp
+  ui/CapturePage.cpp
   ui/Theme.cpp
   ui/LevelMeter.cpp
   ui/AmpPage.cpp
@@ -43,6 +48,9 @@ endif()
 target_link_libraries(${PRODUCT_TARGET}
   PRIVATE
     gas_engine
+    gas_capture
+    gas_train
+    GasBinaryData
     juce::juce_audio_processors
     juce::juce_gui_basics
   PUBLIC

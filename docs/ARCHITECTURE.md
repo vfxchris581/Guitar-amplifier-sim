@@ -72,9 +72,23 @@ Wraps one genuine `nam::DSP` from NeuralAmpModelerCore v0.6.0.
 | Model switch under a continuous signal | largest sample step during the crossfade ≤ the models' own |
 | Invalid / missing files | previous model keeps playing, clear error text |
 
-## Phase 4 design notes — integrated capture & training
+## Capture & training (Phase 4 — implemented)
 
-These shape decisions made now; they are not implemented yet.
+| Path | What |
+|---|---|
+| `src/capture/` | NAM v3 signal verification (MD5), `CaptureTransport` (sample-synchronous play + record, pre-allocated, RT-safe), NAM's latency calibration, level and replicate checks, v3 train/validation cut |
+| `src/train/` | `WaveNet` with hand-written backprop, parameters in NAM's `.nam` weight order; `trainWaveNet` (Adam, exponential decay, threaded batches, best-ESR checkpoint); NAM loudness |
+| `src/plugin/CaptureController` | Workflow state, background training thread, validation render, A/B `AuditionPlayer`, saving |
+| `src/plugin/ui/CapturePage` | The five steps |
+
+**Why a C++ trainer instead of LibTorch.** LibTorch is ~1–2 GB with CUDA and could not be
+fetched or tested on the build machine. NAM's classic WaveNet is small enough that a direct
+implementation is practical: it uses the same architecture definitions, loss, optimiser and
+schedule as NAM's v0.10 trainer, and every exported model is checked against
+NeuralAmpModelerCore. The trade-off is CPU-only training. The newer "packed"/A2 architectures
+of NAM's latest trainer are not trained in-plugin (they are still *played*).
+
+### Original design notes
 
 **Routing inside a host.** A VST3 cannot open the audio interface itself; the host owns
 it. Capture therefore runs through the plugin's own buses:
@@ -93,9 +107,8 @@ Calibration uses its built-in alignment blips to measure round-trip latency.
 **Recording.** The audio thread writes into a pre-allocated lock-free ring buffer; a
 worker drains it to disk. Playback and capture never block each other.
 
-**Training without Python.** NAM's official trainer is Python + PyTorch. The plan is a
-C++ port of the trainer's WaveNet/LSTM training loop on **LibTorch** (PyTorch's C++
-API, BSD-3), running on a background worker with CUDA when available and CPU otherwise.
+**Training without Python.** NAM's official trainer is Python + PyTorch. (Originally planned
+on LibTorch; implemented as a dependency-free C++ port instead — see above.)
 Correctness gate: a model trained in-plugin must (1) export a `.nam` file that
 NeuralAmpModelerCore loads, (2) produce output matching the C++ training graph, and
 (3) reach an ESR comparable to the Python trainer on the same capture. Only then does

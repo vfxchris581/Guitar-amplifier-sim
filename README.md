@@ -4,10 +4,10 @@ A guitar amp modeler, profiler, cab loader and effects suite in **one VST3 plugi
 built on genuine [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
 technology. Windows, macOS and Linux.
 
-> **Status: Phase 1 (core NAM playback) complete.** The plugin loads and plays real
-> `.nam` captures. Capture, training, cabinets and effects are the next phases — see
-> [docs/ROADMAP.md](docs/ROADMAP.md). Nothing in the UI is a placeholder: sections appear
-> as they are built.
+> **Status:** Phase 1 (NAM playback) and Phase 4 (integrated Capture Studio: capture,
+> in-plugin training, A/B validation) are implemented and pass automated tests.
+> Cabinets, effects and the library are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> Nothing in the UI is a placeholder: sections appear as they are built.
 
 ## What works now
 
@@ -19,6 +19,13 @@ technology. Windows, macOS and Linux.
 - Shows the model's real metadata (author, gear, tone, levels, ESR…) and nothing it doesn't contain.
 - Sessions remember the model; a missing file is reported without losing the reference.
 - Peak meters with clip latch, CPU readout.
+
+**CAPTURE** — profile a real amp without leaving the plugin:
+1. *Setup & routing*: drawn connection guide (load box or mic'd cab), send/return channel selection, and NAM's standard capture signal (verified by the same MD5 NAM's trainer uses).
+2. *Level check*: 7 s of NAM's signal; measures round-trip latency (NAM's blip algorithm), return level, clipping and background noise.
+3. *Capture*: plays the full 3:10 signal sample-synchronously and records the return; runs NAM's validation-replicate consistency check.
+4. *Train*: a C++ port of NAM's WaveNet trainer runs in the background on all CPU cores — Standard / Lite / Feather / Nano, epochs, learning rate, decay and batch size configurable, live loss/ESR chart and time remaining, cancel any time.
+5. *Compare & save*: level-matched A/B of the real amp vs. the model on held-out audio, difference monitoring, waveform and spectrum views, then save (a standard `.nam` with full metadata, plus a NAM-compatible `output.wav`) or discard.
 
 ## Building
 
@@ -51,7 +58,9 @@ downloads are quarantined; clear it with
 
 ```bash
 ./build/tests/engine_tests      # NAM parity, resampling, RT-safety, switching, errors, CPU benchmark
-./build/tests/plugin_tests      # processor, state save/restore, missing-model handling
+./build/tests/trainer_tests     # gradient check, export parity with NAM core, training convergence, loudness
+./build/tests/capture_tests     # play/record sync, latency, data checks, capture-to-model
+./build/tests/plugin_tests      # processor, state, missing models, full CAPTURE workflow through processBlock
 ```
 
 ## Documentation

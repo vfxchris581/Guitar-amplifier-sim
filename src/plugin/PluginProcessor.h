@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/AmpEngine.h"
+#include "plugin/CaptureController.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -52,6 +53,8 @@ public:
     juce::File getLastBrowseDirectory() const { return lastBrowseDir; }
 
     gas::AmpEngine& getEngine() noexcept { return engine; }
+    CaptureController& getCapture() noexcept { return capture; }
+    double getHostSampleRate() const noexcept { return hostRate.load(); }
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
     double getCpuLoadPercent() const { return loadMeasurer.getLoadAsPercentage(); }
     int getXRunCount() const { return loadMeasurer.getXRunCount(); }
@@ -62,8 +65,12 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void timerCallback() override; // reports latency changes to the host
     void pushParametersToEngine() noexcept;
+    bool processCaptureOrAudition (juce::AudioBuffer<float>&) noexcept;
 
     gas::AmpEngine engine;
+    CaptureController capture;
+    std::vector<float> captureIn, captureOut; // preallocated in prepareToPlay
+    std::atomic<double> hostRate { 0.0 };
     juce::AudioProcessorValueTreeState parameters;
     juce::AudioProcessLoadMeasurer loadMeasurer;
     juce::File lastBrowseDir;

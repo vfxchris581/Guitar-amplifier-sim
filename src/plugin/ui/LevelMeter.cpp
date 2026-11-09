@@ -78,8 +78,7 @@ void LevelMeter::paint (Graphics& g)
 
     g.setColour (colours::textDim);
     g.setFont (FontOptions (11.0f, Font::bold));
-    g.drawText (caption, captionArea.withWidth (bar.getWidth() + 20.0f).withCentre ({ bar.getCentreX(), captionArea.getCentreY() }),
-                Justification::centred);
+    g.drawText (caption, captionArea, Justification::centredLeft, false);
 
     if (holdDb > kMinDb)
     {

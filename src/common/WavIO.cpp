@@ -1,5 +1,7 @@
 #include "common/WavIO.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -22,8 +24,13 @@ bool readWavMono (const std::string& path, std::vector<float>& samples, double& 
     std::ifstream f (path, std::ios::binary);
     if (! f)
         return false;
-
     std::vector<unsigned char> data ((std::istreambuf_iterator<char> (f)), std::istreambuf_iterator<char>());
+    return readWavMonoFromMemory (data.data(), data.size(), samples, sampleRate);
+}
+
+bool readWavMonoFromMemory (const void* bytes, size_t size, std::vector<float>& samples, double& sampleRate)
+{
+    const std::vector<unsigned char> data ((const unsigned char*) bytes, (const unsigned char*) bytes + size);
     if (data.size() < 12 || std::memcmp (data.data(), "RIFF", 4) != 0 || std::memcmp (data.data() + 8, "WAVE", 4) != 0)
         return false;
 
@@ -46,7 +53,10 @@ bool readWavMono (const std::string& path, std::vector<float>& samples, double& 
         else if (std::memcmp (data.data() + pos, "data", 4) == 0 && channels > 0)
         {
             const int bytes = bits / 8;
-            const size_t frames = size / (size_t) (bytes * channels);
+            if (bytes <= 0)
+                return false;
+            const size_t usable = std::min<size_t> (size, data.size() - (pos + 8)); // tolerate truncated files
+            const size_t frames = usable / (size_t) (bytes * channels);
             samples.resize (frames);
             for (size_t i = 0; i < frames; ++i)
             {
@@ -87,6 +97,31 @@ bool writeWavMono (const std::string& path, const std::vector<float>& samples, d
     u32 ((uint32_t) sampleRate * 4); u16 (4); u16 (32);
     f.write ("data", 4); u32 (dataBytes);
     f.write ((const char*) samples.data(), dataBytes);
+    return (bool) f;
+}
+bool writeWavMono24 (const std::string& path, const std::vector<float>& samples, double sampleRate)
+{
+    std::ofstream f (path, std::ios::binary);
+    if (! f)
+        return false;
+
+    auto u32 = [&] (uint32_t v) { f.write ((const char*) &v, 4); };
+    auto u16 = [&] (uint16_t v) { f.write ((const char*) &v, 2); };
+
+    const uint32_t dataBytes = (uint32_t) (samples.size() * 3);
+    f.write ("RIFF", 4); u32 (36 + dataBytes + (dataBytes & 1)); f.write ("WAVE", 4);
+    f.write ("fmt ", 4); u32 (16); u16 (1); u16 (1); u32 ((uint32_t) sampleRate);
+    u32 ((uint32_t) sampleRate * 3); u16 (3); u16 (24);
+    f.write ("data", 4); u32 (dataBytes);
+    for (float v : samples)
+    {
+        const float c = std::max (-1.0f, std::min (1.0f, v));
+        const int32_t q = (int32_t) std::lround ((double) c * 8388607.0);
+        const char b[3] = { (char) (q & 0xff), (char) ((q >> 8) & 0xff), (char) ((q >> 16) & 0xff) };
+        f.write (b, 3);
+    }
+    if (dataBytes & 1)
+        f.put (0);
     return (bool) f;
 }
 } // namespace gas::wav

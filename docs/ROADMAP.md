@@ -5,7 +5,7 @@ A phase is done only when its milestone is demonstrated, not when its UI exists.
 | Phase | Milestone | Status |
 |---|---|---|
 | 1. Core NAM playback | A working VST3 playing genuine NAM profiles | **Done in code and automated tests. Needs a real-DAW check with a guitar (see below).** |
-| 4. Integrated Capture Studio | Capture and train a genuine NAM model without leaving the plugin | **Next** (spec: CAPTURE is the milestone after playback) |
+| 4. Integrated Capture Studio | Capture and train a genuine NAM model without leaving the plugin | **Done in code and automated tests (simulated amp). Needs a real amp test.** |
 | 2. Cabinet & IR engine | Professional amp + cab processing | Planned |
 | 3. Effects & routing | Complete guitar rig | Planned |
 | 5. Model & preset management | Library, search, presets, import/export | Planned |
@@ -29,7 +29,26 @@ Manual — in your DAW, with a guitar:
 - [ ] Save, close and reopen the project — model and settings return
 - [ ] Note CPU % at your usual buffer size
 
-## Phase 4 — Capture Studio plan
+## Phase 4 — sign-off checklist
+
+Automated:
+- [x] Capture signal recognised by NAM's own MD5
+- [x] Sample-exact playback/recording through `processBlock`; latency detected to the sample
+- [x] NAM's replicate-ESR check catches an amp that changed mid-capture; clipping/silence reported
+- [x] Trainer: finite-difference gradient check; exported `.nam` matches NeuralAmpModelerCore to ~1e-8 for all four presets
+- [x] Training converges on a real NAM model's behaviour; NAM core reproduces the trainer's validation ESR
+- [x] Loudness metadata identical to NAM's Python implementation
+- [x] Full workflow in process: level check -> capture -> train -> save -> loads and plays in AMP with its metadata
+
+Manual — with a real amp:
+- [ ] Download NAM's `v3_0_0.wav`, load it on step 1, route send/return in the DAW at 48 kHz
+- [ ] Level check: latency found, return peak around -12 to -6 dBFS, no clipping
+- [ ] Capture and train Standard for 100 epochs; note the time and ESR
+- [ ] A/B the result; optionally train the saved `output.wav` with NAM's official trainer and compare ESRs
+
+Known limits: training runs on the CPU (no GPU inside the plugin), captures need the project at 48 kHz, and only NAM's v3 signal is accepted.
+
+## Phase 4 — original plan
 
 1. Routing check & calibration loop (plugin output → reamp → amp/load box → plugin input), level meters, clipping/noise detection, latency measurement with NAM's alignment blips.
 2. Capture recorder: plays NAM's standard capture file, records the return through a lock-free ring buffer to disk, cancel/recover.

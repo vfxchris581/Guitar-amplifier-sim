@@ -9,6 +9,9 @@
 #include "plugin/PluginProcessor.h"
 #include "common/WavIO.h"
 
+#include "NAM/dsp.h"
+#include "NAM/get_dsp.h"
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <chrono>
@@ -18,9 +21,9 @@
 using namespace juce;
 
 static int gFailures = 0;
-#define CHECK(cond, msg)                                                           \
+#define CHECK(cond, ...)                                                           \
     do {                                                                           \
-        if (! (cond)) { ++gFailures; std::printf ("  FAIL line %d: %s\n", __LINE__, msg); } \
+        if (! (cond)) { ++gFailures; std::printf ("  FAIL line %d: ", __LINE__); std::printf (__VA_ARGS__); std::printf ("\n"); } \
     } while (0)
 
 static File exampleModel (const char* name) { return File (NAM_EXAMPLE_MODELS_DIR).getChildFile (name); }
@@ -130,6 +133,171 @@ static void testMissingModel()
            "the session must keep its model reference");
 }
 
+// ---------------------------------------------------------------------------
+// CAPTURE milestone, in process: a simulated amp sits between the plugin's
+// output and input, exactly where the reamp chain would be.
+struct AmpInTheLoop
+{
+    std::unique_ptr<nam::DSP> amp = nam::get_dsp (std::filesystem::path (exampleModel ("lstm.nam").getFullPathName().toStdString()));
+    int latency = 300;                // round trip through interface + reamp + load box
+    std::vector<float> returned;      // what the interface input receives
+    size_t pos = 0;
+    AmpInTheLoop() { amp->Reset (48000.0, 512); }
+
+    /** One host block: build the input from earlier output, let the plugin run, feed its send to the amp. */
+    void block (GuitarAmpProcessor& p, AudioBuffer<float>& buf, int sendCh, int returnCh)
+    {
+        const int n = buf.getNumSamples();
+        buf.clear();
+        for (int i = 0; i < n; ++i)
+            buf.setSample (returnCh, i, pos + (size_t) i < returned.size() ? returned[pos + (size_t) i] : 0.0f);
+        MidiBuffer midi;
+        p.processBlock (buf, midi);
+        std::vector<float> out ((size_t) n);
+        float* in = buf.getWritePointer (sendCh);
+        float* o = out.data();
+        amp->process (&in, &o, n);
+        if (returned.size() < pos + (size_t) latency)
+            returned.resize (pos + (size_t) latency, 0.0f);
+        returned.insert (returned.end(), out.begin(), out.end());
+        pos += (size_t) n;
+    }
+};
+
+static std::vector<float> syntheticCaptureSignal()
+{
+    // v3 layout (190 s): validation, silence, blips at 504000 / 552000, training, silence, validation repeat
+    const size_t n = 190 * 48000;
+    std::vector<float> x (n, 0.0f);
+    juce::Random rng (3);
+    auto notes = [&] (size_t from, size_t to)
+    {
+        for (size_t pos = from; pos < to;)
+        {
+            const size_t len = 4800 + (size_t) rng.nextInt (24000);
+            const float f0 = 82.0f * std::pow (2.0f, rng.nextFloat() * 3.0f), amp = 0.05f + 0.6f * rng.nextFloat();
+            for (size_t i = 0; i < len && pos + i < to; ++i)
+            {
+                const float t = (float) i / 48000.0f;
+                x[pos + i] = amp * std::exp (-4.0f * t) * (std::sin (6.2831853f * f0 * t) + 0.3f * std::sin (6.2831853f * 2 * f0 * t));
+            }
+            pos += len;
+        }
+    };
+    notes (0, 432000);
+    x[504000] = x[552000] = 0.5f;
+    notes (600000, n - 432000 - 24000);
+    std::copy (x.begin(), x.begin() + 432000, x.end() - 432000);
+    return x;
+}
+
+static void testCaptureMilestone (const File& outDir)
+{
+    std::printf ("[capture] level check -> capture -> train -> save -> play, through processBlock\n");
+    GuitarAmpProcessor p;
+    p.setPlayConfigDetails (2, 2, 48000.0, 128);
+    p.prepareToPlay (48000.0, 128);
+    auto& cap = p.getCapture();
+    cap.setSignalForTesting (syntheticCaptureSignal());
+    cap.sendChannel = 0;   // left out -> reamp
+    cap.returnChannel = 1; // right in <- amp
+    CaptureController::capturesFolderOverride = outDir.getChildFile ("Captures");
+
+    AmpInTheLoop rig;
+    AudioBuffer<float> buf (2, 128);
+    String err;
+
+    CHECK (cap.startLevelCheck (48000.0, err), "level check did not start: %s", err.toRawUTF8());
+    while (cap.transport.state() == gas::capture::CaptureTransport::State::Running)
+        rig.block (p, buf, 0, 1);
+    cap.poll();
+    CHECK (cap.levelCheck.has_value(), "no level check result");
+    if (cap.levelCheck)
+    {
+        std::printf ("  level check: %s\n", cap.levelCheck->latency.message.c_str());
+        CHECK (cap.levelCheck->latency.detected == std::optional<int> (rig.latency), "wrong latency");
+    }
+
+    // While nothing is running the plugin is the amp again (send channel is not the capture signal)
+    CHECK (cap.startCapture (48000.0, err), "capture did not start: %s", err.toRawUTF8());
+    while (cap.transport.state() == gas::capture::CaptureTransport::State::Running)
+        rig.block (p, buf, 0, 1);
+    cap.poll();
+    CHECK (cap.capture && cap.capture->usable, "capture unusable");
+    if (! cap.capture || ! cap.capture->usable)
+        return;
+    std::printf ("  capture: %s, replicate ESR %.2e\n", cap.capture->latency.message.c_str(), cap.capture->replicate.esr);
+
+    gas::train::TrainOptions opt;
+    opt.preset = gas::train::Preset::Nano;
+    opt.epochs = 2;
+    CaptureController::ModelDetails d;
+    d.name = "Test Amp Lead";
+    d.gearMake = "Test";
+    d.gearModel = "Amp";
+    d.toneType = "hi_gain";
+    d.settingsNote = "Gain 7";
+    CHECK (cap.startTraining (opt, d, err), "training did not start: %s", err.toRawUTF8());
+    while (cap.isTraining())
+        Thread::sleep (50);
+    const auto st = cap.trainingStatus();
+    std::printf ("  training: %s\n", st.message.toRawUTF8());
+    CHECK (st.finished && cap.validation.has_value(), "no trained model");
+    if (! cap.validation)
+        return;
+    std::printf ("  validation ESR %.4f\n", cap.validation->esr);
+
+    // A/B audition plays level-matched material through the plugin output
+    cap.audition.setMode (AuditionPlayer::Reference);
+    MidiBuffer midi;
+    buf.clear();
+    p.processBlock (buf, midi);
+    CHECK (buf.getMagnitude (0, 0, 128) > 0.0f, "audition produced no audio");
+    cap.audition.setMode (AuditionPlayer::Off);
+
+    const auto saved = cap.saveModel (err);
+    CHECK (saved.existsAsFile(), "model not saved: %s", err.toRawUTF8());
+    CHECK (saved.getSiblingFile ("output.wav").existsAsFile(), "raw capture not saved");
+    std::printf ("  saved %s\n", saved.getFullPathName().toRawUTF8());
+
+    // The saved model must load and play in the AMP section with its metadata
+    p.loadModel (saved);
+    waitForModel (p, buf);
+    const auto status = p.getEngine().getStatus();
+    CHECK (status.state == gas::AmpEngine::Status::State::Ready, "saved model did not load: %s", status.message.c_str());
+    if (status.info)
+    {
+        std::printf ("  loaded into AMP: \"%s\" (%s %s, %s), loudness %.1f dB, ESR %.4f\n", status.info->name.c_str(),
+                     status.info->gearMake.c_str(), status.info->gearModel.c_str(), status.info->toneType.c_str(),
+                     status.info->loudnessDb.value_or (-999), status.info->validationEsr.value_or (-1));
+        CHECK (status.info->name == "Test Amp Lead" && status.info->loudnessDb.has_value()
+                   && status.info->validationEsr.has_value(),
+               "metadata missing");
+    }
+
+    // Screenshots of each CAPTURE step with real results in them
+    if (SystemStats::getEnvironmentVariable ("DISPLAY", {}).isNotEmpty())
+    {
+        std::unique_ptr<AudioProcessorEditor> editor (p.createEditor());
+        auto* ed = dynamic_cast<GuitarAmpEditor*> (editor.get());
+        ed->addToDesktop (0);
+        ed->setVisible (true);
+        ed->showSection (1);
+        for (int step = 0; step < 5; ++step)
+        {
+            ed->getCapturePage().showStep (step);
+            ed->getCapturePage().refreshNow();
+            auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.5f);
+            auto f = outDir.getChildFile ("capture_step" + String (step + 1) + ".png");
+            f.deleteFile();
+            FileOutputStream os (f);
+            PNGImageFormat().writeImageToStream (img, os);
+        }
+        ed->removeFromDesktop();
+        std::printf ("  CAPTURE page snapshots in %s\n", outDir.getFullPathName().toRawUTF8());
+    }
+}
+
 static void snapshotEditor (const File& png)
 {
     std::printf ("[editor] AMP page snapshot -> %s\n", png.getFullPathName().toRawUTF8());
@@ -176,6 +344,7 @@ int main (int argc, char** argv)
     testProcessing();
     testStateRoundTrip();
     testMissingModel();
+    testCaptureMilestone (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_capture_test"));
 
     if (argc > 1 && SystemStats::getEnvironmentVariable ("DISPLAY", {}).isNotEmpty())
         snapshotEditor (File::getCurrentWorkingDirectory().getChildFile (argv[1]));

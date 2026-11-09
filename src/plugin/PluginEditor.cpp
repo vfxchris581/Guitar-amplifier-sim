@@ -9,10 +9,30 @@ constexpr int kFooterHeight = 26;
 } // namespace
 
 GuitarAmpEditor::GuitarAmpEditor (GuitarAmpProcessor& p)
-    : AudioProcessorEditor (p), processor (p), ampPage (p)
+    : AudioProcessorEditor (p),
+      processor (p),
+      ampPage (p),
+      capturePage (p, [this] (const File& f)
+                   {
+                       processor.loadModel (f);
+                       showSection (0);
+                   })
 {
     setLookAndFeel (&theme);
     addAndMakeVisible (ampPage);
+    addChildComponent (capturePage);
+
+    // Sections appear here as they are built: AMP, CAPTURE, then CAB, STOMP, EFFECTS, LIBRARY, SETTINGS.
+    for (auto name : { "AMP", "CAPTURE" })
+    {
+        auto* t = tabs.add (new SectionTab (name));
+        t->setClickingTogglesState (true);
+        t->setRadioGroupId (1001);
+        const int index = tabs.size() - 1;
+        t->onClick = [this, index] { showSection (index); };
+        addAndMakeVisible (t);
+    }
+    tabs[0]->setToggleState (true, dontSendNotification);
 
     setResizable (true, true);
     setResizeLimits (860, 540, 1600, 1000);
@@ -24,6 +44,23 @@ GuitarAmpEditor::~GuitarAmpEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void GuitarAmpEditor::SectionTab::paintButton (Graphics& g, bool over, bool)
+{
+    const bool on = getToggleState();
+    g.setColour (on ? ui::colours::accent : (over ? ui::colours::text : ui::colours::textDim));
+    g.setFont (FontOptions (13.0f, Font::bold));
+    g.drawText (getButtonText(), getLocalBounds(), Justification::centred);
+    if (on)
+        g.fillRect (getLocalBounds().removeFromBottom (3).reduced (12, 0));
+}
+
+void GuitarAmpEditor::showSection (int index)
+{
+    ampPage.setVisible (index == 0);
+    capturePage.setVisible (index == 1);
+    tabs[index]->setToggleState (true, dontSendNotification);
 }
 
 void GuitarAmpEditor::timerCallback()
@@ -59,15 +96,6 @@ void GuitarAmpEditor::paint (Graphics& g)
     const String title (GAS_PRODUCT_NAME);
     g.drawText (title.toUpperCase(), h, Justification::centredLeft);
 
-    // The section currently built. Further sections (CAPTURE, CAB, ...) are added
-    // to this bar as they are implemented.
-    const int titleW = GlyphArrangement::getStringWidthInt (FontOptions (20.0f, Font::bold), title.toUpperCase());
-    auto tab = Rectangle<int> (h.getX() + titleW + 28, header.getY(), 70, header.getHeight());
-    g.setColour (ui::colours::accent);
-    g.setFont (FontOptions (13.0f, Font::bold));
-    g.drawText ("AMP", tab, Justification::centred);
-    g.fillRect (tab.removeFromBottom (3).reduced (12, 0));
-
     g.setColour (ui::colours::textDim);
     g.setFont (FontOptions (12.0f));
     g.drawText ("Neural Amp Modeler engine  |  v" GAS_VERSION_STRING, h, Justification::centredRight);
@@ -84,4 +112,11 @@ void GuitarAmpEditor::resized()
     r.removeFromTop (kHeaderHeight);
     r.removeFromBottom (kFooterHeight);
     ampPage.setBounds (r);
+    capturePage.setBounds (r);
+
+    const int titleW = GlyphArrangement::getStringWidthInt (FontOptions (20.0f, Font::bold),
+                                                            String (GAS_PRODUCT_NAME).toUpperCase());
+    auto tabRow = Rectangle<int> (18 + titleW + 20, 0, 200, kHeaderHeight);
+    for (auto* t : tabs)
+        t->setBounds (tabRow.removeFromLeft (t->getButtonText().length() * 11 + 34));
 }

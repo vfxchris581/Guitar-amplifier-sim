@@ -47,11 +47,11 @@ LatencyCalibration calibrateLatencyV3 (const std::vector<float>& y)
             r.detected = delay;
             r.recommended = delay - kSafetyFactor;
             r.matchesLookahead = (delay == -kLookahead);
-            r.message = "Round-trip latency: " + std::to_string (delay) + " samples.";
+            r.message = "Round-trip latency: " + std::to_string (delay) + " samples (" + std::to_string (delay / 48.0).substr (0, 4) + " ms)";
             if (r.matchesLookahead)
-                r.message += " This equals the search limit and is probably wrong - check the routing.";
+                r.message += ". This equals the search limit and is probably wrong - check the routing.";
             else if (delay < 0)
-                r.message += " A negative latency means the return arrived before the signal was sent - "
+                r.message += ". A negative latency means the return arrived before the signal was sent - "
                              "the input is probably hearing something other than the amp.";
             return r;
         }

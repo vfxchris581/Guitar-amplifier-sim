@@ -70,6 +70,9 @@ void GuitarAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
     loadMeasurer.reset (sampleRate, samplesPerBlock);
+    captureIn.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
+    captureOut.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
+    hostRate = sampleRate;
 }
 
 void GuitarAmpProcessor::pushParametersToEngine() noexcept
@@ -91,6 +94,9 @@ void GuitarAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     const int numIn = getTotalNumInputChannels();
     const int numOut = getTotalNumOutputChannels();
     if (numSamples == 0 || buffer.getNumChannels() == 0)
+        return;
+
+    if (processCaptureOrAudition (buffer))
         return;
 
     pushParametersToEngine();
@@ -122,6 +128,60 @@ void GuitarAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
     for (int ch = 1; ch < numOut; ++ch)
         buffer.copyFrom (ch, 0, buffer, 0, 0, numSamples);
+}
+
+bool GuitarAmpProcessor::processCaptureOrAudition (juce::AudioBuffer<float>& buffer) noexcept
+{
+    auto& transport = capture.transport;
+    const bool capturing = transport.state() == gas::capture::CaptureTransport::State::Running;
+    const bool auditioning = capture.audition.getMode() != AuditionPlayer::Off;
+    if (! capturing && ! auditioning)
+        return false;
+
+    const int numSamples = buffer.getNumSamples();
+    const int numIn = getTotalNumInputChannels();
+    const int numOut = getTotalNumOutputChannels();
+    const int returnCh = juce::jlimit (0, juce::jmax (0, numIn - 1), capture.returnChannel.load());
+    const auto send = (CaptureController::SendChannel) capture.sendChannel.load();
+    const int maxChunk = (int) captureIn.size();
+    if (maxChunk == 0)
+        return false;
+
+    for (int done = 0; done < numSamples;)
+    {
+        const int n = juce::jmin (maxChunk, numSamples - done);
+        if (numIn > 0)
+            std::copy (buffer.getReadPointer (returnCh) + done, buffer.getReadPointer (returnCh) + done + n, captureIn.begin());
+        else
+            std::fill (captureIn.begin(), captureIn.begin() + n, 0.0f);
+
+        if (transport.process (captureIn.data(), captureOut.data(), n))
+        {
+            // Capture signal only on the send channel(s); everything else silent.
+            for (int ch = 0; ch < numOut; ++ch)
+            {
+                const bool isSend = send == CaptureController::SendChannel::Both
+                                    || (send == CaptureController::SendChannel::Left && ch == 0)
+                                    || (send == CaptureController::SendChannel::Right && ch == 1);
+                if (isSend)
+                    buffer.copyFrom (ch, done, captureOut.data(), n);
+                else
+                    buffer.clear (ch, done, n);
+            }
+        }
+        else if (capture.audition.process (captureOut.data(), n))
+        {
+            for (int ch = 0; ch < numOut; ++ch)
+                buffer.copyFrom (ch, done, captureOut.data(), n);
+        }
+        else
+        {
+            for (int ch = 0; ch < numOut; ++ch)
+                buffer.clear (ch, done, n);
+        }
+        done += n;
+    }
+    return true;
 }
 
 void GuitarAmpProcessor::timerCallback()

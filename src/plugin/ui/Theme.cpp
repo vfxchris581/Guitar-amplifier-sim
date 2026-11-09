@@ -12,6 +12,9 @@ Theme::Theme()
     setColour (Slider::textBoxOutlineColourId, Colours::transparentBlack);
     setColour (Slider::textBoxBackgroundColourId, Colours::transparentBlack);
     setColour (Slider::rotarySliderFillColourId, colours::accent);
+    setColour (Slider::thumbColourId, colours::text);
+    setColour (Slider::trackColourId, colours::accent);
+    setColour (Slider::backgroundColourId, colours::well);
     setColour (ComboBox::backgroundColourId, colours::well);
     setColour (ComboBox::outlineColourId, colours::panelEdge);
     setColour (ComboBox::textColourId, colours::text);
