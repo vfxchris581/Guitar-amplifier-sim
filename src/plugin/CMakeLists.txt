@@ -24,7 +24,9 @@ target_sources(${PRODUCT_TARGET} PRIVATE
   CaptureController.cpp
   CabEngine.cpp
   IRLibrary.cpp
+  fx/Effects.cpp
   ui/CabPage.cpp
+  ui/FxPages.cpp
   ui/CapturePage.cpp
   ui/Theme.cpp
   ui/LevelMeter.cpp

@@ -3,6 +3,7 @@
 #include "engine/AmpEngine.h"
 #include "plugin/CabEngine.h"
 #include "plugin/CaptureController.h"
+#include "plugin/fx/Effects.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -60,6 +61,7 @@ public:
     gas::AmpEngine& getEngine() noexcept { return engine; }
     CaptureController& getCapture() noexcept { return capture; }
     CabEngine& getCab() noexcept { return cab; }
+    fx::Chain& getChain() noexcept { return chain; }
 
     enum class CabMode { Auto = 0, On = 1, Off = 2 };
     /** Whether the cabinet stage is processing, and why (shown in the CAB page). */
@@ -83,6 +85,7 @@ private:
     gas::AmpEngine engine;
     CaptureController capture;
     CabEngine cab;
+    fx::Chain chain;
     std::vector<float> monoScratch;
     std::atomic<bool> cabActive { false };
     std::array<juce::String, 2> irPaths;

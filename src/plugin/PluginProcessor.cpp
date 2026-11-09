@@ -21,6 +21,7 @@ GuitarAmpProcessor::GuitarAmpProcessor()
     interfaceOutputDbu = parameters.getRawParameterValue (ParamIDs::interfaceOutputDbu);
     inputChannel       = parameters.getRawParameterValue (ParamIDs::inputChannel);
 
+    chain.bind (parameters);
     lastBrowseDir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
     startTimerHz (10);
 }
@@ -64,6 +65,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout GuitarAmpProcessor::createLa
         [] (float v, int) { return String (v, 2) + " ms"; });
     auto pct = AudioParameterFloatAttributes().withStringFromValueFunction (
         [] (float v, int) { return std::abs (v) < 0.005f ? String ("C") : (v < 0 ? "L" : "R") + String ((int) std::lround (std::abs (v) * 100)); });
+    fx::addParameters (layout);
+
     for (int m = 0; m < 2; ++m)
     {
         const String name = m == 0 ? "Mic A " : "Mic B ";
@@ -95,6 +98,7 @@ void GuitarAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine.prepare (sampleRate, samplesPerBlock);
     loadMeasurer.reset (sampleRate, samplesPerBlock);
     cab.prepare (sampleRate, samplesPerBlock);
+    chain.prepare (sampleRate, samplesPerBlock);
     monoScratch.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
     captureIn.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
     captureOut.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
@@ -150,39 +154,46 @@ void GuitarAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         buffer.clear (0, 0, numSamples);
     }
 
+    // Pre-amp stomps (mono) -> amp
+    chain.processPre (mono, numSamples);
     engine.process (mono, numSamples);
 
+    float* right = numOut > 1 ? buffer.getWritePointer (1) : nullptr;
+
     // Cabinet: mono amp signal in, stereo out
+    bool stereo = false;
     if (cabActive.load() && ! monoScratch.empty())
     {
         pushCabParameters();
-        float* right = numOut > 1 ? buffer.getWritePointer (1) : nullptr;
         for (int done = 0; done < numSamples;)
         {
             const int n = juce::jmin ((int) monoScratch.size(), numSamples - done);
             std::copy (mono + done, mono + done + n, monoScratch.begin());
-            if (right != nullptr)
+            float* r = right != nullptr ? right + done : captureOut.data(); // captureOut is free while not capturing
+            if (cab.process (monoScratch.data(), mono + done, r, n))
             {
-                if (! cab.process (monoScratch.data(), mono + done, right + done, n))
-                    std::copy (monoScratch.begin(), monoScratch.begin() + n, right + done);
-            }
-            else
-            {
-                // mono output: fold the cab's stereo down
-                float* tmpR = captureOut.data(); // free while not capturing
-                if (cab.process (monoScratch.data(), mono + done, tmpR, n))
+                stereo = true;
+                if (right == nullptr)
                     for (int i = 0; i < n; ++i)
-                        mono[done + i] = 0.5f * (mono[done + i] + tmpR[i]);
+                        mono[done + i] = 0.5f * (mono[done + i] + r[i]); // mono output: fold down
             }
+            else if (right != nullptr)
+                std::copy (monoScratch.begin(), monoScratch.begin() + n, right + done);
             done += n;
         }
-        for (int ch = 2; ch < numOut; ++ch)
-            buffer.copyFrom (ch, 0, buffer, 0, 0, numSamples);
-        return;
     }
+    if (right != nullptr && ! stereo)
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
 
-    for (int ch = 1; ch < numOut; ++ch)
-        buffer.copyFrom (ch, 0, buffer, 0, 0, numSamples);
+    // Post-amp effects (stereo when the output is)
+    if (auto* playHead = getPlayHead())
+        if (auto pos = playHead->getPosition())
+            if (auto bpm = pos->getBpm())
+                chain.bpm = *bpm;
+    chain.processPost (mono, right, numSamples);
+
+    for (int ch = 2; ch < numOut; ++ch)
+        buffer.copyFrom (ch, 0, buffer, ch % 2, 0, numSamples);
 }
 
 void GuitarAmpProcessor::pushCabParameters() noexcept
@@ -354,6 +365,8 @@ void GuitarAmpProcessor::getStateInformation (juce::MemoryBlock& dest)
     auto state = parameters.copyState();
     state.setProperty ("modelPath", juce::String (engine.requestedModelPath()), nullptr);
     state.setProperty ("browseDir", lastBrowseDir.getFullPathName(), nullptr);
+    state.setProperty ("preOrder", chain.getOrder (true), nullptr);
+    state.setProperty ("postOrder", chain.getOrder (false), nullptr);
     state.setProperty ("irPathA", irPaths[0], nullptr);
     state.setProperty ("irPathB", irPaths[1], nullptr);
     state.setProperty ("version", GAS_VERSION_STRING, nullptr);
@@ -377,6 +390,11 @@ void GuitarAmpProcessor::setStateInformation (const void* data, int size)
 
     // Missing files are reported in the AMP page while the path is kept, so the
     // session still knows which model it expects.
+    if (! chain.setOrder (true, state.getProperty ("preOrder").toString()))
+        chain.setOrder (true, fx::Chain::defaultOrder (true));
+    if (! chain.setOrder (false, state.getProperty ("postOrder").toString()))
+        chain.setOrder (false, fx::Chain::defaultOrder (false));
+
     for (int m = 0; m < CabEngine::numMics; ++m)
     {
         const auto ir = state.getProperty (m == 0 ? "irPathA" : "irPathB").toString();

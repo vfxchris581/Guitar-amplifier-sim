@@ -466,6 +466,225 @@ static void testCabinet (const File& dir)
     }
 }
 
+// ---------------------------------------------------------------------------
+static void setParam (GuitarAmpProcessor& p, const String& id, float value)
+{
+    auto* prm = p.getParameters().getParameter (id);
+    prm->setValueNotifyingHost (prm->convertTo0to1 (value));
+}
+
+static std::vector<float> runModule (fx::Module& m, const std::vector<float>& x, std::vector<float>* right = nullptr)
+{
+    std::vector<float> l = x, r = x;
+    for (size_t pos = 0; pos < x.size(); pos += 128)
+    {
+        const int n = (int) std::min<size_t> (128, x.size() - pos);
+        m.process (l.data() + pos, right ? r.data() + pos : nullptr, n);
+    }
+    if (right) *right = r;
+    return l;
+}
+
+static std::vector<float> sineWave (float freq, float amp, size_t n, double rate = 48000.0)
+{
+    std::vector<float> x (n);
+    for (size_t i = 0; i < n; ++i)
+        x[i] = amp * (float) std::sin (6.283185307179586 * freq * (double) i / rate);
+    return x;
+}
+
+static double rmsDb (const std::vector<float>& x, size_t from, size_t to)
+{
+    double e = 0;
+    for (size_t i = from; i < to; ++i) e += (double) x[i] * x[i];
+    return 10.0 * std::log10 (e / (double) (to - from) + 1e-30);
+}
+
+/** Magnitude (dB) of a single frequency via Goertzel-style correlation. */
+static double toneDb (const std::vector<float>& x, double f, size_t from, size_t to)
+{
+    double re = 0, im = 0;
+    for (size_t i = from; i < to; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2.0 * MathConstants<double>::pi * (double) (i - from) / (double) (to - from));
+        re += w * x[i] * std::cos (2.0 * MathConstants<double>::pi * f * (double) i / 48000.0);
+        im += w * x[i] * std::sin (2.0 * MathConstants<double>::pi * f * (double) i / 48000.0);
+    }
+    return 20.0 * std::log10 (2.0 * std::sqrt (re * re + im * im) / ((double) (to - from) * 0.5) + 1e-30);
+}
+
+static void testEffects()
+{
+    std::printf ("[effects] stompboxes and post effects\n");
+    GuitarAmpProcessor p;
+    p.prepareToPlay (48000.0, 128);
+    auto& chain = p.getChain();
+    auto mod = [&] (const char* id) { return chain.get (id); };
+
+    // Noise gate: quiet signal muted, loud signal passes
+    {
+        setParam (p, "gate_threshold", -40.0f);
+        auto* g = mod ("gate");
+        g->reset();
+        const auto quiet = runModule (*g, sineWave (200, 0.003f, 48000));
+        const auto loud = runModule (*g, sineWave (200, 0.3f, 48000));
+        std::printf ("  gate (-40 dB): -50 dBFS tone -> %.1f dB, -10 dBFS tone -> %.1f dB\n",
+                     rmsDb (quiet, 24000, 48000) - rmsDb (sineWave (200, 0.003f, 48000), 24000, 48000),
+                     rmsDb (loud, 24000, 48000) - rmsDb (sineWave (200, 0.3f, 48000), 24000, 48000));
+        CHECK (rmsDb (quiet, 24000, 48000) < -100.0, "gate does not close");
+        CHECK (std::abs (rmsDb (loud, 24000, 48000) - rmsDb (sineWave (200, 0.3f, 48000), 24000, 48000)) < 0.1, "gate alters open signal");
+    }
+    // Compressor: -6 dBFS peak sine, threshold -20, ratio 4
+    {
+        setParam (p, "comp_threshold", -20.0f);
+        setParam (p, "comp_ratio", 4.0f);
+        auto* c = mod ("comp");
+        c->reset();
+        const auto x = sineWave (500, 0.5f, 48000);
+        const auto y = runModule (*c, x);
+        const double inDb = rmsDb (x, 24000, 48000), outDb = rmsDb (y, 24000, 48000);
+        std::printf ("  compressor 4:1 @ -20 dB: input %.1f dB RMS -> output %.1f dB RMS (reduction %.1f dB)\n", inDb, outDb, inDb - outDb);
+        CHECK (inDb - outDb > 7.0 && inDb - outDb < 12.0, "compression amount implausible");
+    }
+    // Drives: harmonics rise with drive, aliasing stays low thanks to oversampling
+    for (auto id : { "od", "dist", "fuzz" })
+    {
+        auto* d = mod (id);
+        const String driveId = String (id) + (String (id) == "fuzz" ? "_fuzz" : "_drive");
+        setParam (p, driveId, 0.1f);
+        d->reset();
+        const auto x = sineWave (1000, 0.3f, 48000);
+        const auto lo = runModule (*d, x);
+        setParam (p, driveId, 0.9f);
+        d->reset();
+        const auto hi = runModule (*d, x);
+        auto thd = [&] (const std::vector<float>& y)
+        {
+            double h = 0;
+            for (int k = 2; k <= 9; ++k) h += std::pow (10.0, toneDb (y, 1000.0 * k, 8000, 48000) / 10.0);
+            return 10.0 * std::log10 (h + 1e-30) - toneDb (y, 1000, 8000, 48000);
+        };
+        // aliasing: a 7.3 kHz tone at full drive; energy at the first fold-back products
+        const auto hf = runModule (*d, sineWave (7300, 0.3f, 48000));
+        const double fund = toneDb (hf, 7300, 8000, 48000);
+        double worstAlias = -300;
+        for (int k = 4; k <= 9; ++k)
+        {
+            double f = std::fmod (7300.0 * k, 48000.0);
+            if (f > 24000.0) f = 48000.0 - f;
+            worstAlias = std::max (worstAlias, toneDb (hf, f, 8000, 48000) - fund);
+        }
+        std::printf ("  %-5s THD drive 10%% %.1f dB, 90%% %.1f dB; worst alias at 7.3 kHz %.1f dB\n", id, thd (lo), thd (hi), worstAlias);
+        CHECK (thd (hi) > thd (lo) + 6.0, "%s: drive does not add harmonics", id);
+        CHECK (worstAlias < -35.0, "%s: aliasing too high", id);
+        bool finite = true;
+        for (float v : hi) finite = finite && std::isfinite (v);
+        CHECK (finite, "%s: non-finite output", id);
+    }
+    // EQ band accuracy
+    {
+        setParam (p, "eq_b2Freq", 1000.0f);
+        setParam (p, "eq_b2Gain", 12.0f);
+        setParam (p, "eq_b2Q", 1.0f);
+        auto* e = mod ("eq");
+        e->prepare (48000.0, 128);
+        const auto x = sineWave (1000, 0.1f, 48000);
+        std::vector<float> r;
+        const auto y = runModule (*e, x, &r);
+        const double gain = toneDb (y, 1000, 8000, 48000) - toneDb (x, 1000, 8000, 48000);
+        const double off = toneDb (runModule (*e, sineWave (100, 0.1f, 48000)), 100, 8000, 48000) - toneDb (sineWave (100, 0.1f, 48000), 100, 8000, 48000);
+        std::printf ("  EQ +12 dB @ 1 kHz: measured %+.2f dB at 1 kHz, %+.2f dB at 100 Hz\n", gain, off);
+        CHECK (std::abs (gain - 12.0) < 0.2, "EQ band gain wrong");
+        CHECK (std::abs (off) < 1.5, "EQ band too wide");
+        setParam (p, "eq_b2Gain", 0.0f);
+    }
+    // Delay timing, feedback, tempo sync
+    {
+        auto* d = mod ("delay");
+        setParam (p, "delay_time", 250.0f);
+        setParam (p, "delay_mix", 1.0f);
+        setParam (p, "delay_feedback", 0.5f);
+        setParam (p, "delay_lowcut", 20.0f);
+        setParam (p, "delay_highcut", 20000.0f);
+        d->reset();
+        std::vector<float> imp (48000, 0.0f);
+        imp[0] = 1.0f;
+        const auto y = runModule (*d, imp);
+        auto peakNear = [&] (size_t c) { size_t best = c - 20; for (size_t i = c - 20; i < c + 20; ++i) if (std::abs (y[i]) > std::abs (y[best])) best = i; return best; };
+        const size_t e1 = peakNear (12000), e2 = peakNear (24000);
+        std::printf ("  delay 250 ms: echoes at %zu and %zu samples, second/first %.2f\n", e1, e2, std::abs (y[e2] / y[e1]));
+        CHECK (e1 == 12000 && e2 == 24000, "delay time wrong");
+        CHECK (std::abs (std::abs (y[e2] / y[e1]) - 0.5) < 0.05, "feedback wrong");
+        setParam (p, "delay_sync", 3.0f); // 1/4
+        chain.bpm = 120.0;
+        d->reset();
+        const auto ys = runModule (*d, std::vector<float> (imp.begin(), imp.end()));
+        size_t peak = 1;
+        for (size_t i = 1; i < 30000; ++i) if (std::abs (ys[i]) > std::abs (ys[peak])) peak = i;
+        std::printf ("  tempo sync 1/4 at 120 BPM: first echo at %.1f ms\n", peak / 48.0);
+        CHECK (std::abs ((double) peak - 24000.0) < 2.0, "tempo sync wrong");
+        setParam (p, "delay_sync", 0.0f);
+    }
+    // Reverbs: decay tracks the setting and stays stable
+    for (int type = 0; type < 4; ++type)
+    {
+        auto* rv = mod ("reverb");
+        setParam (p, "reverb_type", (float) type);
+        setParam (p, "reverb_decay", 2.0f);
+        setParam (p, "reverb_mix", 1.0f);
+        setParam (p, "reverb_predelay", 0.0f);
+        rv->prepare (48000.0, 128);
+        std::vector<float> imp (48000 * 4, 0.0f);
+        imp[0] = 1.0f;
+        std::vector<float> r;
+        const auto y = runModule (*rv, imp, &r);
+        // T60 from the energy decay between 0.2 s and 1.2 s
+        const double e1 = rmsDb (y, 9600, 19200), e2 = rmsDb (y, 57600, 67200);
+        const double t60 = 60.0 / ((e1 - e2) / 1.0);
+        bool finite = true;
+        for (float v : y) finite = finite && std::isfinite (v);
+        const char* names[] = { "room", "hall", "plate", "spring" };
+        std::printf ("  reverb %-6s decay 2.0 s -> measured T60 %.2f s\n", names[type], t60);
+        CHECK (finite && t60 > 1.0 && t60 < 4.0, "reverb decay off or unstable");
+    }
+    // Modulation stays stable and actually modulates
+    for (int type = 0; type < 3; ++type)
+    {
+        auto* m = mod ("mod");
+        setParam (p, "mod_type", (float) type);
+        setParam (p, "mod_feedback", 0.7f);
+        m->prepare (48000.0, 128);
+        const auto x = sineWave (440, 0.3f, 96000);
+        std::vector<float> r;
+        const auto y = runModule (*m, x, &r);
+        double diff = 0, peakAbs = 0;
+        for (size_t i = 0; i < y.size(); ++i) { diff += std::abs (y[i] - x[i]); peakAbs = std::max (peakAbs, (double) std::abs (y[i])); }
+        CHECK (diff / (double) y.size() > 1e-3 && peakAbs < 2.0, "modulation type %d inactive or unstable", type);
+    }
+    // Chain order validation
+    CHECK (! chain.setOrder (true, "gate,comp,od"), "partial order accepted");
+    CHECK (! chain.setOrder (true, "gate,gate,od,boost,dist,fuzz"), "duplicate accepted");
+    CHECK (chain.setOrder (true, "fuzz,dist,boost,od,comp,gate") && chain.getOrder (true) == "fuzz,dist,boost,od,comp,gate", "reorder failed");
+    CHECK (chain.setOrder (false, "reverb,delay,mod,eq"), "post reorder failed");
+
+    // Whole rig CPU: every module on
+    for (auto& m : fx::allModules())
+        setParam (p, String (m.id) + "_on", 1.0f);
+    AudioBuffer<float> buf (2, 128);
+    MidiBuffer midi;
+    const auto x = sineWave (110, 0.3f, 48000 * 5);
+    const auto t0 = Time::getMillisecondCounterHiRes();
+    for (size_t pos = 0; pos + 128 <= x.size(); pos += 128)
+    {
+        buf.copyFrom (0, 0, x.data() + pos, 128);
+        buf.copyFrom (1, 0, x.data() + pos, 128);
+        p.processBlock (buf, midi);
+    }
+    const double ms = Time::getMillisecondCounterHiRes() - t0;
+    std::printf ("  all 10 effects on (no amp model): %.1f%% of one core at 48 kHz\n", ms / 50.0);
+    CHECK (std::isfinite (buf.getSample (0, 10)), "rig output not finite");
+}
+
 static void snapshotEditor (const File& png)
 {
     std::printf ("[editor] AMP page snapshot -> %s\n", png.getFullPathName().toRawUTF8());
@@ -542,6 +761,31 @@ static void snapshotEditor (const File& png)
         cabPng.deleteFile();
         FileOutputStream cabOut (cabPng);
         PNGImageFormat().writeImageToStream (cabImage, cabOut);
+
+        for (auto id : { "comp", "od", "eq", "delay", "reverb" })
+            setParam (p, String (id) + "_on", 1.0f);
+        setParam (p, "eq_b2Gain", 4.0f);
+        setParam (p, "eq_b4Gain", -3.0f);
+        setParam (p, "eq_hpf", 90.0f);
+        for (int section = 3; section <= 4; ++section)
+        {
+            ed->showSection (section);
+            for (int k = 0; k < 6; ++k)
+            {
+                for (size_t pos = 0; pos + 256 <= di.size(); pos += 256)
+                {
+                    buf.copyFrom (0, 0, di.data() + pos, 256);
+                    buf.copyFrom (1, 0, di.data() + pos, 256);
+                    p.processBlock (buf, midi);
+                    if (pos % (256 * 16) == 0) { Thread::sleep (40); Timer::callPendingTimersSynchronously(); }
+                }
+            }
+            auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.5f);
+            const auto f = png.getSiblingFile (section == 3 ? "stomp_page.png" : "effects_page.png");
+            f.deleteFile();
+            FileOutputStream os (f);
+            PNGImageFormat().writeImageToStream (img, os);
+        }
     }
     editor->removeFromDesktop();
 }
@@ -553,6 +797,7 @@ int main (int argc, char** argv)
     testProcessing();
     testStateRoundTrip();
     testMissingModel();
+    testEffects();
     testCabinet (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_cab_test"));
     testCaptureMilestone (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_capture_test"));
 

@@ -4,6 +4,7 @@
 #include "plugin/ui/AmpPage.h"
 #include "plugin/ui/CabPage.h"
 #include "plugin/ui/CapturePage.h"
+#include "plugin/ui/FxPages.h"
 #include "plugin/ui/Theme.h"
 
 class GuitarAmpEditor : public juce::AudioProcessorEditor,
@@ -33,6 +34,9 @@ private:
     ui::AmpPage ampPage;
     ui::CapturePage capturePage;
     ui::CabPage cabPage;
+    ui::StompPage stompPage;
+    ui::EffectsPage effectsPage;
+    std::vector<juce::Component*> sections;
     juce::OwnedArray<SectionTab> tabs;
     juce::String footerText;
 
