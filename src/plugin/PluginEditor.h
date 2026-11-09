@@ -2,6 +2,7 @@
 
 #include "plugin/PluginProcessor.h"
 #include "plugin/ui/AmpPage.h"
+#include "plugin/ui/CabPage.h"
 #include "plugin/ui/CapturePage.h"
 #include "plugin/ui/Theme.h"
 
@@ -31,6 +32,7 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
     ui::AmpPage ampPage;
     ui::CapturePage capturePage;
+    ui::CabPage cabPage;
     juce::OwnedArray<SectionTab> tabs;
     juce::String footerText;
 

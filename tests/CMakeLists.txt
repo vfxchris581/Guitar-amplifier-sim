@@ -25,7 +25,7 @@ add_test(NAME capture_tests COMMAND capture_tests)
 # Plugin-level tests link the plugin's shared code (processor + editor).
 if(GAS_BUILD_PLUGIN)
   add_executable(plugin_tests PluginTests.cpp)
-  target_link_libraries(plugin_tests PRIVATE ${PRODUCT_TARGET})
+  target_link_libraries(plugin_tests PRIVATE ${PRODUCT_TARGET} gas_train)
   # Compile exactly like the plugin's own sources (JUCE module config, includes).
   target_include_directories(plugin_tests PRIVATE $<TARGET_PROPERTY:${PRODUCT_TARGET},INCLUDE_DIRECTORIES>)
   target_compile_definitions(plugin_tests PRIVATE $<TARGET_PROPERTY:${PRODUCT_TARGET},COMPILE_DEFINITIONS>)

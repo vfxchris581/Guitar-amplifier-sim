@@ -6,7 +6,7 @@ A phase is done only when its milestone is demonstrated, not when its UI exists.
 |---|---|---|
 | 1. Core NAM playback | A working VST3 playing genuine NAM profiles | **Done in code and automated tests. Needs a real-DAW check with a guitar (see below).** |
 | 4. Integrated Capture Studio | Capture and train a genuine NAM model without leaving the plugin | **Done in code and automated tests (simulated amp). Needs a real amp test.** |
-| 2. Cabinet & IR engine | Professional amp + cab processing | Planned |
+| 2. Cabinet & IR engine | Professional amp + cab processing | **Done in code and automated tests.** |
 | 3. Effects & routing | Complete guitar rig | Planned |
 | 5. Model & preset management | Library, search, presets, import/export | Planned |
 | 6. Professional interface | Full GUI polish | Planned |

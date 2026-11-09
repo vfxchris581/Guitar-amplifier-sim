@@ -16,14 +16,16 @@ GuitarAmpEditor::GuitarAmpEditor (GuitarAmpProcessor& p)
                    {
                        processor.loadModel (f);
                        showSection (0);
-                   })
+                   }),
+      cabPage (p)
 {
     setLookAndFeel (&theme);
     addAndMakeVisible (ampPage);
     addChildComponent (capturePage);
+    addChildComponent (cabPage);
 
     // Sections appear here as they are built: AMP, CAPTURE, then CAB, STOMP, EFFECTS, LIBRARY, SETTINGS.
-    for (auto name : { "AMP", "CAPTURE" })
+    for (auto name : { "AMP", "CAPTURE", "CAB" })
     {
         auto* t = tabs.add (new SectionTab (name));
         t->setClickingTogglesState (true);
@@ -60,6 +62,7 @@ void GuitarAmpEditor::showSection (int index)
 {
     ampPage.setVisible (index == 0);
     capturePage.setVisible (index == 1);
+    cabPage.setVisible (index == 2);
     tabs[index]->setToggleState (true, dontSendNotification);
 }
 
@@ -113,10 +116,11 @@ void GuitarAmpEditor::resized()
     r.removeFromBottom (kFooterHeight);
     ampPage.setBounds (r);
     capturePage.setBounds (r);
+    cabPage.setBounds (r);
 
     const int titleW = GlyphArrangement::getStringWidthInt (FontOptions (20.0f, Font::bold),
                                                             String (GAS_PRODUCT_NAME).toUpperCase());
-    auto tabRow = Rectangle<int> (18 + titleW + 20, 0, 200, kHeaderHeight);
+    auto tabRow = Rectangle<int> (18 + titleW + 20, 0, 400, kHeaderHeight);
     for (auto* t : tabs)
         t->setBounds (tabRow.removeFromLeft (t->getButtonText().length() * 11 + 34));
 }

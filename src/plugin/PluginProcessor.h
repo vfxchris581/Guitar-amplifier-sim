@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/AmpEngine.h"
+#include "plugin/CabEngine.h"
 #include "plugin/CaptureController.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -14,6 +15,10 @@ inline constexpr const char* calibrateInput     = "calibrateInput";
 inline constexpr const char* interfaceInputDbu  = "interfaceInputDbu";
 inline constexpr const char* interfaceOutputDbu = "interfaceOutputDbu";
 inline constexpr const char* inputChannel       = "inputChannel";
+inline constexpr const char* cabMode            = "cabMode";
+
+/** Per-microphone parameter IDs: mic index 0 = "A", 1 = "B". */
+inline juce::String mic (int index, const char* name) { return juce::String ("mic") + (index == 0 ? "A" : "B") + "_" + name; }
 } // namespace ParamIDs
 
 class GuitarAmpProcessor : public juce::AudioProcessor,
@@ -54,6 +59,14 @@ public:
 
     gas::AmpEngine& getEngine() noexcept { return engine; }
     CaptureController& getCapture() noexcept { return capture; }
+    CabEngine& getCab() noexcept { return cab; }
+
+    enum class CabMode { Auto = 0, On = 1, Off = 2 };
+    /** Whether the cabinet stage is processing, and why (shown in the CAB page). */
+    bool isCabActive (juce::String* reason = nullptr) const;
+    bool loadIR (int mic, const juce::File& file, juce::String& error);
+    void clearIR (int mic);
+    juce::String getIRPath (int mic) const { return irPaths[(size_t) mic]; }
     double getHostSampleRate() const noexcept { return hostRate.load(); }
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
     double getCpuLoadPercent() const { return loadMeasurer.getLoadAsPercentage(); }
@@ -69,6 +82,14 @@ private:
 
     gas::AmpEngine engine;
     CaptureController capture;
+    CabEngine cab;
+    std::vector<float> monoScratch;
+    std::atomic<bool> cabActive { false };
+    std::array<juce::String, 2> irPaths;
+    std::array<float, 2> appliedIrLength { -1.0f, -1.0f };
+    std::array<int, 2> appliedIrNormalise { -1, -1 };
+    void pushCabParameters() noexcept;
+    void updateCabActive();
     std::vector<float> captureIn, captureOut; // preallocated in prepareToPlay
     std::atomic<double> hostRate { 0.0 };
     juce::AudioProcessorValueTreeState parameters;

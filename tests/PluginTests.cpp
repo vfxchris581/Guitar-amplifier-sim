@@ -7,7 +7,9 @@
 
 #include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
+#include "plugin/IRLibrary.h"
 #include "common/WavIO.h"
+#include "train/WaveNet.h"
 
 #include "NAM/dsp.h"
 #include "NAM/get_dsp.h"
@@ -298,6 +300,172 @@ static void testCaptureMilestone (const File& outDir)
     }
 }
 
+// ---------------------------------------------------------------------------
+static File writeIR (const File& f, const std::vector<float>& ir, double rate)
+{
+    gas::wav::writeWavMono (f.getFullPathName().toStdString(), ir, rate);
+    return f;
+}
+
+/** Runs the cab until a newly loaded IR is active (JUCE loads IRs on a background thread). */
+static void settleCab (CabEngine& cab)
+{
+    std::vector<float> in (256, 0.0f), l (256), r (256);
+    for (int i = 0; i < 100; ++i)
+    {
+        cab.process (in.data(), l.data(), r.data(), 256);
+        Thread::sleep (5);
+    }
+}
+
+static std::vector<float> runCab (CabEngine& cab, const std::vector<float>& x, std::vector<float>* right = nullptr)
+{
+    std::vector<float> l (x.size()), r (x.size());
+    for (size_t pos = 0; pos < x.size(); pos += 256)
+    {
+        const int n = (int) std::min<size_t> (256, x.size() - pos);
+        cab.process (x.data() + pos, l.data() + pos, r.data() + pos, n);
+    }
+    if (right)
+        *right = r;
+    return l;
+}
+
+static void testCabinet (const File& dir)
+{
+    std::printf ("[cab] convolution, IR handling and mic controls\n");
+    dir.createDirectory();
+    Random rng (5);
+    std::vector<float> noise (48000);
+    for (auto& v : noise)
+        v = rng.nextFloat() * 2.0f - 1.0f;
+
+    // 1. Exact convolution against a direct reference
+    std::vector<float> ir (300);
+    for (size_t i = 0; i < ir.size(); ++i)
+        ir[i] = std::exp (-(float) i / 40.0f) * (rng.nextFloat() - 0.5f);
+    {
+        CabEngine cab;
+        cab.prepare (48000.0, 256);
+        String err;
+        CHECK (cab.loadIR (0, writeIR (dir.getChildFile ("ir48.wav"), ir, 48000.0), 1000.0, false, err), "load: %s", err.toRawUTF8());
+        cab.mics[1].enabled = false;
+        settleCab (cab);
+        std::vector<float> right;
+        const auto out = runCab (cab, noise, &right);
+        double maxErr = 0, maxLR = 0;
+        for (size_t n = 1000; n < noise.size(); ++n)
+        {
+            double ref = 0;
+            for (size_t k = 0; k < ir.size(); ++k)
+                ref += (double) ir[k] * noise[n - k];
+            maxErr = std::max (maxErr, std::abs (ref - out[n]));
+            maxLR = std::max (maxLR, (double) std::abs (out[n] - right[n]));
+        }
+        std::printf ("  mono IR, centre pan: max error vs direct convolution %.2e, L-R difference %.2e\n", maxErr, maxLR);
+        CHECK (maxErr < 1e-4, "convolution mismatch");
+        CHECK (maxLR < 1e-6, "centred mono IR should give identical channels");
+
+        // 2. Mic controls
+        std::vector<float> impulse (4096, 0.0f);
+        impulse[100] = 1.0f;
+        cab.mics[0].delayMs = 1.0f; // 48 samples at 48 kHz
+        cab.mics[0].invert = true;
+        settleCab (cab);
+        const auto shifted = runCab (cab, impulse);
+        int peakAt = 0;
+        for (int i = 0; i < 4096; ++i)
+            if (std::abs (shifted[(size_t) i]) > std::abs (shifted[(size_t) peakAt]))
+                peakAt = i;
+        int irPeak = 0;
+        for (int i = 0; i < (int) ir.size(); ++i)
+            if (std::abs (ir[(size_t) i]) > std::abs (ir[(size_t) irPeak]))
+                irPeak = i;
+        std::printf ("  1 ms delay + phase invert: peak moved to sample %d (expected %d), sign %s\n", peakAt,
+                     100 + irPeak + 48, (shifted[(size_t) peakAt] * ir[(size_t) irPeak] < 0) ? "inverted" : "NOT inverted");
+        CHECK (peakAt == 100 + irPeak + 48, "delay wrong");
+        CHECK (shifted[(size_t) peakAt] * ir[(size_t) irPeak] < 0, "polarity not inverted");
+
+        cab.mics[0].delayMs = 0.0f;
+        cab.mics[0].invert = false;
+        cab.mics[0].pan = -1.0f;
+        settleCab (cab);
+        runCab (cab, noise, &right);
+        double rightEnergy = 0;
+        for (size_t i = 2000; i < right.size(); ++i)
+            rightEnergy += (double) right[i] * right[i];
+        CHECK (rightEnergy < 1e-6, "hard-left pan leaks into the right channel");
+
+        cab.mics[0].pan = 0.0f;
+        cab.mics[0].hpfHz = 500.0f;
+        settleCab (cab);
+        std::vector<float> low (48000);
+        for (size_t i = 0; i < low.size(); ++i)
+            low[i] = 0.5f * std::sin (6.2831853f * 50.0f * (float) i / 48000.0f);
+        const auto filtered = runCab (cab, low);
+        cab.mics[0].hpfHz = 20.0f;
+        settleCab (cab);
+        const auto unfiltered = runCab (cab, low);
+        auto rmsOf = [] (const std::vector<float>& v) { double e = 0; for (size_t i = 24000; i < v.size(); ++i) e += (double) v[i] * v[i]; return std::sqrt (e / 24000.0); };
+        const double attenuation = 20 * std::log10 (rmsOf (filtered) / rmsOf (unfiltered));
+        std::printf ("  500 Hz high-pass on 50 Hz: %.1f dB\n", attenuation);
+        CHECK (attenuation < -30.0, "high-pass too weak");
+    }
+
+    // 3. IR at a different sample rate and IR length trimming
+    {
+        CabEngine cab;
+        cab.prepare (48000.0, 256);
+        std::vector<float> longIr (44100 / 5); // 200 ms at 44.1 kHz
+        for (size_t i = 0; i < longIr.size(); ++i)
+            longIr[i] = std::exp (-(float) i / 2000.0f) * (rng.nextFloat() - 0.5f);
+        String err;
+        CHECK (cab.loadIR (0, writeIR (dir.getChildFile ("ir441.wav"), longIr, 44100.0), 50.0, true, err), "load 44.1k IR");
+        const auto info = cab.getIRInfo (0);
+        std::printf ("  44.1 kHz IR: file %.0f ms, using %.1f ms, resampled to the 48 kHz host by the convolution engine\n",
+                     info.fileLengthMs, info.usedLengthMs);
+        CHECK (std::abs (info.usedLengthMs - 50.0) < 0.1 && std::abs (info.fileLengthMs - 200.0) < 0.1, "length trim");
+        settleCab (cab);
+        const auto out = runCab (cab, noise);
+        double e = 0;
+        for (float v : out)
+            e += (double) v * v;
+        CHECK (e > 1.0 && std::isfinite (e), "resampled IR produced no output");
+    }
+
+    // 4. Double-cab protection and state
+    {
+        GuitarAmpProcessor p;
+        p.setPlayConfigDetails (2, 2, 48000.0, 256);
+        p.prepareToPlay (48000.0, 256);
+        String err;
+        CHECK (p.loadIR (0, dir.getChildFile ("ir48.wav"), err), "processor IR load");
+        String why;
+        CHECK (p.isCabActive (&why), "cab should be active with an IR: %s", why.toRawUTF8());
+
+        // a model whose metadata says it includes a cabinet
+        gas::train::WaveNet net (gas::train::WaveNetSpec::fromPreset (gas::train::Preset::Nano));
+        net.initialise (1);
+        const auto namFile = dir.getChildFile ("with_cab.nam");
+        namFile.replaceWithText (net.exportNam (R"({"name":"Amp+Cab","gear_type":"amp_cab"})", 48000.0));
+        p.loadModel (namFile);
+        p.getEngine().waitUntilWorkerIdle();
+        CHECK (! p.isCabActive (&why), "Auto mode must bypass the cab for a cab-inclusive capture");
+        std::printf ("  cab-inclusive capture loaded -> \"%s\"\n", why.toRawUTF8());
+        p.getParameters().getParameter (ParamIDs::cabMode)->setValueNotifyingHost (
+            p.getParameters().getParameter (ParamIDs::cabMode)->convertTo0to1 (1.0f)); // On
+        CHECK (p.isCabActive(), "On mode must force the cab on");
+
+        MemoryBlock state;
+        p.getStateInformation (state);
+        GuitarAmpProcessor q;
+        q.prepareToPlay (48000.0, 256);
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        CHECK (q.getCab().hasIR (0) && q.getIRPath (0) == dir.getChildFile ("ir48.wav").getFullPathName(),
+               "IR not restored from state");
+    }
+}
+
 static void snapshotEditor (const File& png)
 {
     std::printf ("[editor] AMP page snapshot -> %s\n", png.getFullPathName().toRawUTF8());
@@ -307,6 +475,34 @@ static void snapshotEditor (const File& png)
     p.loadModel (exampleModel ("wavenet_a1_standard.nam"));
     AudioBuffer<float> buf (2, 256);
     waitForModel (p, buf);
+
+    // IRs for the CAB page snapshot (library in a temp folder, never the user's Documents)
+    const auto irDir = png.getParentDirectory().getChildFile ("snapshot_irs");
+    irDir.deleteRecursively();
+    irDir.createDirectory();
+    IRLibrary::folderOverride = irDir.getChildFile ("library");
+    {
+        Random rng (2);
+        Array<File> files;
+        for (auto name : { "4x12 V30 SM57 cap edge", "4x12 V30 R121 off-axis", "2x12 Blue AC open back", "1x12 Jensen C10Q" })
+        {
+            std::vector<float> ir (4800);
+            for (size_t i = 0; i < ir.size(); ++i)
+                ir[i] = std::exp (-(float) i / 300.0f) * (rng.nextFloat() - 0.5f);
+            files.add (writeIR (irDir.getChildFile (String (name) + ".wav"), ir, 48000.0));
+        }
+        IRLibrary lib;
+        StringArray skipped;
+        lib.importFiles (files, skipped);
+        lib.setTags (lib.folder().getChildFile ("4x12 V30 SM57 cap edge.wav"), { "4x12", "Closed-back", "Modern", "Metal" });
+        lib.setTags (lib.folder().getChildFile ("4x12 V30 R121 off-axis.wav"), { "4x12", "Closed-back", "Rock" });
+        lib.setTags (lib.folder().getChildFile ("2x12 Blue AC open back.wav"), { "2x12", "Open-back", "Vintage", "Clean" });
+        lib.setTags (lib.folder().getChildFile ("1x12 Jensen C10Q.wav"), { "1x12", "Open-back", "Vintage" });
+        String err;
+        p.loadIR (0, lib.folder().getChildFile ("4x12 V30 SM57 cap edge.wav"), err);
+        p.loadIR (1, lib.folder().getChildFile ("4x12 V30 R121 off-axis.wav"), err);
+        p.getParameters().getParameter (ParamIDs::mic (1, "on"))->setValueNotifyingHost (1.0f);
+    }
 
     std::unique_ptr<AudioProcessorEditor> editor (p.createEditor());
     editor->setVisible (true);
@@ -334,6 +530,19 @@ static void snapshotEditor (const File& png)
     png.deleteFile();
     FileOutputStream out (png);
     CHECK (out.openedOk() && PNGImageFormat().writeImageToStream (image, out), "could not write snapshot");
+
+    if (auto* ed = dynamic_cast<GuitarAmpEditor*> (editor.get()))
+    {
+        ed->showSection (2);
+        Timer::callPendingTimersSynchronously();
+        Thread::sleep (300);
+        Timer::callPendingTimersSynchronously();
+        auto cabImage = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.5f);
+        const auto cabPng = png.getSiblingFile ("cab_page.png");
+        cabPng.deleteFile();
+        FileOutputStream cabOut (cabPng);
+        PNGImageFormat().writeImageToStream (cabImage, cabOut);
+    }
     editor->removeFromDesktop();
 }
 
@@ -344,6 +553,7 @@ int main (int argc, char** argv)
     testProcessing();
     testStateRoundTrip();
     testMissingModel();
+    testCabinet (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_cab_test"));
     testCaptureMilestone (File::getSpecialLocation (File::tempDirectory).getChildFile ("gas_capture_test"));
 
     if (argc > 1 && SystemStats::getEnvironmentVariable ("DISPLAY", {}).isNotEmpty())

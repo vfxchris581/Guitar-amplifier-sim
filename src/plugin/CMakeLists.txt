@@ -22,6 +22,9 @@ target_sources(${PRODUCT_TARGET} PRIVATE
   PluginProcessor.cpp
   PluginEditor.cpp
   CaptureController.cpp
+  CabEngine.cpp
+  IRLibrary.cpp
+  ui/CabPage.cpp
   ui/CapturePage.cpp
   ui/Theme.cpp
   ui/LevelMeter.cpp
@@ -53,6 +56,8 @@ target_link_libraries(${PRODUCT_TARGET}
     GasBinaryData
     juce::juce_audio_processors
     juce::juce_gui_basics
+    juce::juce_dsp
+    juce::juce_audio_formats
   PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
