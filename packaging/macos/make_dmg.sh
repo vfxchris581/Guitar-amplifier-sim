@@ -20,10 +20,16 @@ mkdir -p "$OUT"
 
 echo "Packaging $NAME $VERSION ($BUNDLE_ID)"
 
-# Optional code signing of the plug-in (ad-hoc signature from the build otherwise)
+# Sign the finished bundle (after every file, e.g. moduleinfo.json, is in place).
+# Without a Developer ID we still ad-hoc sign: Apple Silicon refuses to run code
+# whose signature doesn't match its files, and macOS reports that as "damaged".
+xattr -cr "$VST3"
 if [ -n "${SIGN_APP_ID:-}" ]; then
   codesign --force --deep --options runtime --timestamp --sign "$SIGN_APP_ID" "$VST3"
+else
+  codesign --force --deep --sign - "$VST3"
 fi
+codesign --verify --deep --strict --verbose=2 "$VST3"
 
 # 1. Component package with a fixed install location
 mkdir -p "$WORK/root/Library/Audio/Plug-Ins/VST3"
@@ -83,6 +89,11 @@ test -d "$MNT/$NAME.vst3/Contents/MacOS"
 test -f "$MNT/Install $NAME.pkg"
 pkgutil --payload-files "$MNT/Install $NAME.pkg" | grep -q "Library/Audio/Plug-Ins/VST3/$NAME.vst3/Contents/MacOS"
 lipo -archs "$MNT/$NAME.vst3/Contents/MacOS/$NAME"
+codesign --verify --deep --strict "$MNT/$NAME.vst3"
+# the copy inside the installer package must also verify after expansion
+EXP="$(mktemp -d)/x"
+pkgutil --expand-full "$MNT/Install $NAME.pkg" "$EXP"
+codesign --verify --deep --strict "$(find "$EXP" -name "$NAME.vst3" -type d | head -1)"
 hdiutil detach "$MNT" >/dev/null
 
 echo "Created $DMG"
