@@ -34,7 +34,16 @@ FetchContent_Declare(audiodsptools
   SOURCE_SUBDIR  do-not-add-subdirectory
 )
 
-FetchContent_MakeAvailable(namcore eigen audiodsptools)
+# NAM's trainer (MIT). Not compiled; it is the reference for the C++ trainer and
+# provides the loudness stimulus (nam/models/_resources/loudness_input.wav).
+FetchContent_Declare(namtrainer
+  GIT_REPOSITORY https://github.com/sdatkinson/neural-amp-modeler.git
+  GIT_TAG        e680deaf4ed1d28ea260e7267680b9f10fed24b8
+  SOURCE_SUBDIR  do-not-add-subdirectory
+)
+
+FetchContent_MakeAvailable(namcore eigen audiodsptools namtrainer)
+set(NAM_LOUDNESS_STIMULUS "${namtrainer_SOURCE_DIR}/nam/models/_resources/loudness_input.wav")
 
 if(GAS_BUILD_PLUGIN)
   # JUCE (AGPLv3 or commercial JUCE licence — see docs/LICENSING.md).

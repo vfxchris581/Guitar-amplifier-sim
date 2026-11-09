@@ -44,6 +44,21 @@ if(NOT MSVC)
   target_compile_options(gas_engine PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 
+# Model training (pure C++, background threads only)
+add_library(gas_train STATIC
+  src/train/WaveNet.cpp
+  src/train/Trainer.cpp
+)
+target_include_directories(gas_train PUBLIC src)
+target_link_libraries(gas_train PUBLIC "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>")
+find_package(Threads REQUIRED)
+target_link_libraries(gas_train PUBLIC Threads::Threads)
+if(MSVC)
+  target_compile_options(gas_train PRIVATE /O2)
+else()
+  target_compile_options(gas_train PRIVATE -O3 -Wall -Wextra -Wno-unused-parameter)
+endif()
+
 if(GAS_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)

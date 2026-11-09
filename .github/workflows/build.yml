@@ -23,7 +23,7 @@ jobs:
             pluginval_zip: pluginval_Linux.zip
             pluginval_bin: ./pluginval
           - name: macOS (universal)
-            os: macos-14
+            os: macos-latest
             pluginval_zip: pluginval_macOS.zip
             pluginval_bin: ./pluginval.app/Contents/MacOS/pluginval
             cmake_extra: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
@@ -68,6 +68,21 @@ jobs:
           BIN=build/tests/engine_tests
           [ -f build/tests/Release/engine_tests.exe ] && BIN=build/tests/Release/engine_tests.exe
           "$BIN"
+
+      - name: Trainer tests (gradients, NAM-core export parity, training)
+        shell: bash
+        run: |
+          BIN=build/tests/trainer_tests
+          [ -f build/tests/Release/trainer_tests.exe ] && BIN=build/tests/Release/trainer_tests.exe
+          "$BIN" --write-loudness-output .
+
+      - name: Loudness matches NAM's Python implementation
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m pip install --quiet numpy scipy
+          REF=$(python3 tests/loudness_reference.py build/_deps/namtrainer-src loudness_model_output.wav build/_deps/namtrainer-src/nam/models/_resources/loudness_input.wav)
+          echo "NAM Python loudness: $REF"
+          build/tests/trainer_tests --loudness-reference "$REF"
 
       - name: Plugin tests (processing, state, missing models)
         shell: bash

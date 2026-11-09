@@ -9,6 +9,14 @@ target_link_libraries(engine_tests PRIVATE Threads::Threads)
 
 add_test(NAME engine_tests COMMAND engine_tests)
 
+add_executable(trainer_tests TrainerTests.cpp WavIO.cpp)
+target_link_libraries(trainer_tests PRIVATE gas_train gas_engine)
+target_compile_definitions(trainer_tests PRIVATE
+  NAM_EXAMPLE_MODELS_DIR="${namcore_SOURCE_DIR}/example_models"
+  NAM_LOUDNESS_STIMULUS="${NAM_LOUDNESS_STIMULUS}"
+)
+add_test(NAME trainer_tests COMMAND trainer_tests)
+
 # Plugin-level tests link the plugin's shared code (processor + editor).
 if(GAS_BUILD_PLUGIN)
   add_executable(plugin_tests PluginTests.cpp WavIO.cpp)
